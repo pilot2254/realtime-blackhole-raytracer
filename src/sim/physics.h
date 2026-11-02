@@ -20,6 +20,7 @@ float camRadius(const CamState& c);             // Boyer-Lindquist radius of the
 float horizonRadius();                          // outer horizon for the current spin and gravity, in r_s
 float farClockRate(const CamState& c);          // seconds passing far away per camera second; < 0 = none
 float diskProximity(const CamState& c);         // 1 touching the disk, falling off with distance
+float horizonQuake(const CamState& c);          // 0..1: builds toward the horizon, peaks crossing it, dies inside
 
 float viewShift(const CamState& c);             // frequency seen straight ahead / at infinity
 float autoExposure(const CamState& c);          // exposure multiplier from viewShift

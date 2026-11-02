@@ -17,6 +17,9 @@ struct SoundControls {
     float hum = 0.0f;           // a ship close by
     float ocean = 0.0f;         // a planet's ocean close by
     float coda = 0.0f;          // 1 after the film's cut to black: resolve to A minor and ring out
+    float quake = 0.0f;         // sub-bass swell toward the horizon (horizonQuake)
+    float inside = 0.0f;        // 1 inside the horizon: crossing it fires the boom
+    float duck = 0.0f;          // the last moments before the horizon: the music holds its breath
 };
 // t: film time when film = true, else free-camera time (scene objects move with it)
 SoundControls soundControls(const CamState& c, float fade, float t, bool film);
@@ -41,6 +44,8 @@ private:
     float tickEnv = 0, tickAge = 0, tickLp = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
     float humPhase[3] = {0, 0, 0}, humLp[2] = {0, 0}, oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
     float codaMix = 0.0f;
+    float quakePh[4] = {0, 0, 0, 0}, rumbleLp[2][2] = {{0, 0}, {0, 0}};
+    float boomAge = -1.0f, boomPh = 0.0f, boomLp = 0.0f, wasInside = -1.0f, limEnv = 0.0f;
     uint32_t rng = 0x9E3779B9u;
     Comb comb[2][4];
     Allpass ap[2][2];

@@ -18,6 +18,9 @@ SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     s.tickLevel = smoothstepf(0.22f, 0.42f, s.tension);             // the clock fades in below ~10 r_s
     s.roar  = diskProximity(c);
     s.shift = std::max(0.3f, std::min(4.0f, viewShift(c)));
+    s.quake  = horizonQuake(c);
+    s.inside = r < rh ? 1.0f : 0.0f;
+    s.duck   = r < rh ? 0.0f : smoothstepf(1.15f, 1.0f, r / rh);
     // scene objects nearby: a ship's engines, a planet's ocean
     CamFrame cf = camBasis(c);
     for (const SceneObject& o : g_objects) {
@@ -42,7 +45,7 @@ SoundControls filmSound(float t) {
     s.level = std::exp(-(t - cut) / (0.45f * tail)) * smoothstepf(L, L - std::min(6.0f, 0.5f * tail), t);
     s.coda = 1.0f;
     s.tension = 0.45f;
-    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f;
+    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f; s.quake = 0.0f; s.duck = 0.0f;
     return s;
 }
 
@@ -138,6 +141,11 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         cur.shift     += (target.shift - cur.shift) * k;
         cur.hum       += (target.hum - cur.hum) * k;
         cur.ocean     += (target.ocean - cur.ocean) * k;
+        cur.quake     += (target.quake - cur.quake) * k;
+        cur.duck      += (target.duck - cur.duck) * (1.0f - std::exp(-n / ((target.duck > cur.duck ? 0.25f : 0.03f) * RATE)));
+        // crossing the horizon fires the boom (not on the first block, so opening inside stays quiet)
+        if (wasInside == 0.0f && target.inside > 0.5f) { boomAge = 0.0f; boomPh = 0.0f; }
+        wasInside = target.inside > 0.5f ? 1.0f : 0.0f;
         cur.tickRate   = target.tickRate;
         float levelFrom = cur.level;
         cur.level     += (target.level - cur.level) * kl;
@@ -234,12 +242,50 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 L += oceanLp2[0] * o; R += oceanLp2[1] * o;
             }
 
-            // hall, then the master level (after the reverb, so a cut to black is true silence), soft clip
+            // the horizon: an organ's 32-foot register on A, two pipes beating against each other so the
+            // floor throbs, driven into saturation so its overtones carry on small speakers too, over a
+            // rumble of sub-filtered noise. Kept dry: low end in the hall only turns to mud.
+            float bass = 0.0f;
+            if (cur.quake > 1e-3f) {
+                const float hz[4] = {27.5f, 27.8f, 41.2f, 55.0f}, amp[4] = {0.9f, 0.6f, 0.35f, 0.5f};
+                float s = 0;
+                for (int q = 0; q < 4; q++) {
+                    quakePh[q] += hz[q] / RATE; quakePh[q] -= (int)quakePh[q];
+                    s += amp[q] * std::sin(2 * PI * quakePh[q]);
+                }
+                float trem = 0.8f + 0.2f * std::sin(2 * PI * 5.5f * (float)(ts + i / (double)RATE));
+                for (int q = 0; q < 2; q++) {
+                    rumbleLp[q][0] += (noise() - rumbleLp[q][0]) * 0.006f;   // ~45 Hz, two poles
+                    rumbleLp[q][1] += (rumbleLp[q][0] - rumbleLp[q][1]) * 0.006f;
+                }
+                bass += cur.quake * (0.5f * std::tanh(1.8f * s) * trem + 6.0f * (rumbleLp[0][1] + rumbleLp[1][1]));
+            }
+            // the boom on crossing: a kick that falls from 80 Hz to the floor and hangs for seconds
+            if (boomAge >= 0.0f) {
+                float tb = boomAge / RATE;
+                float f = 27.5f + 55.0f * std::exp(-tb / 0.35f);
+                boomPh += f / RATE; boomPh -= (int)boomPh;
+                float env = (1.0f - std::exp(-tb / 0.004f)) * std::exp(-tb / 4.0f);
+                boomLp += (noise() - boomLp) * 0.02f;
+                bass += env * (0.9f * std::tanh(2.2f * std::sin(2 * PI * boomPh)) + 3.0f * boomLp * std::exp(-tb / 0.5f));
+                boomAge += 1.0f;
+                if (tb > 14.0f) boomAge = -1.0f;
+            }
+
+            // the music ducks before the horizon (the hall rings on) and makes room for the bass
+            float mg = (1.0f - 0.75f * cur.duck) * (1.0f - 0.25f * cur.quake);
+            L *= mg; R *= mg;
+
+            // hall, then the master level (after the reverb, so a cut to black is true silence), then a
+            // limiter that lets the drop be loud without breaking up, and a soft clip
             float wetL = reverb(0, (L + R) * 0.5f + L * 0.2f), wetR = reverb(1, (L + R) * 0.5f + R * 0.2f);
             float lv = levelFrom + (cur.level - levelFrom) * fi;
-            float oL = (L * 0.7f + wetL * 0.55f) * lv, oR = (R * 0.7f + wetR * 0.55f) * lv;
-            lr[2 * (start + i)]     = std::tanh(oL * 1.2f) * 0.85f;
-            lr[2 * (start + i) + 1] = std::tanh(oR * 1.2f) * 0.85f;
+            float oL = (L * 0.7f + wetL * 0.55f + bass) * lv, oR = (R * 0.7f + wetR * 0.55f + bass) * lv;
+            float peak = std::max(std::fabs(oL), std::fabs(oR));
+            limEnv = peak > limEnv ? limEnv + (peak - limEnv) * 0.05f : limEnv * 0.99995f;   // fast attack, ~0.4 s release
+            float g = limEnv > 0.9f ? 0.9f / limEnv : 1.0f;
+            lr[2 * (start + i)]     = std::tanh(oL * g * 1.2f) * 0.85f;
+            lr[2 * (start + i) + 1] = std::tanh(oR * g * 1.2f) * 0.85f;
         }
         for (size_t v = 0; v < voices.size(); v++) voices[v].amp = targetAmp[v];
     }

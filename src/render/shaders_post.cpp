@@ -66,6 +66,7 @@ uniform float uBar;           // letterbox bar height in pixels
 uniform float uEHT;           // 0..1 blend to the Event Horizon Telescope view
 uniform sampler2D uBlur;      // deep level of the bloom pyramid: a telescope-sized blur
 uniform vec2  uBlurTexel;
+uniform float uShake;         // 0..1 horizon-crossing camera shake
 
 // the "afmhot" colour map of the EHT images
 vec3 afmhot(float x) { return clamp(vec3(2.0 * x, 2.0 * x - 0.5, 2.0 * x - 1.0), 0.0, 1.0); }
@@ -79,6 +80,13 @@ float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx
 void main() {
     vec2 uv  = gl_FragCoord.xy / uRes;
     vec2 cc  = uv - 0.5;
+    if (uShake > 0.0) {
+        // a handheld jolt: a few incommensurate wobbles, zoomed in a touch so the edges never show
+        float a = 0.007 * uShake, tt = uTime;
+        vec2 j = vec2(sin(tt * 47.0) + 0.6 * sin(tt * 83.0 + 1.3) + 0.4 * sin(tt * 131.0 + 2.1),
+                      sin(tt * 53.0 + 0.7) + 0.6 * sin(tt * 97.0 + 2.9) + 0.4 * sin(tt * 149.0 + 0.4)) / 2.0;
+        uv = 0.5 + cc * (1.0 - 2.0 * a) + j * a * vec2(uRes.y / uRes.x, 1.0);
+    }
     vec2 off = cc * dot(cc, cc) * uCA;
     vec3 hdr = vec3(texture(uScene, uv + off).r, texture(uScene, uv).g, texture(uScene, uv - off).b);
     vec3 blm = texture(uBloom, uv).rgb;

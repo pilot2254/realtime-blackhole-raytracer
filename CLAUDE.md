@@ -47,6 +47,7 @@ Prefer headless checks; the user is often at the machine.
 
 - The film (`gargantua_film.cpp`) is about 238 s: hot spot, EHT cue, Endurance in act IV, Miller's planet in act V, the fall in act VI, cut to black at `g_blackAt` (201 s), then end credits (subtitle cues; `|` breaks lines, the first line is the heading). The music must never follow the picture's fade-out to the cut (only the fade-in); after the cut `filmSound` rings out over the credits. Objects with a time window fade in/out (`objectPresence`, partly see-through in the shader) and should still leave the frame on their own before `t1` (the follow ship climbs away). Captions quote numbers from the physics (clock rates, time dilation, horizons); if you move keys, re-check them with stills plus the HUD.
 - The soundtrack is a deterministic function of the camera path (`filmSound(t)`): the same in live playback and in the export. After the cut the coda resolves to A minor and decays; keep it from cutting hard.
+- The horizon drop: `horizonQuake(cam)` (physics.cpp) drives both the synth's sub layer and the composite's `uShake` (scaled by `P.shake`); `SoundControls.duck` dips the music just outside the horizon, and crossing (`inside` 0 to 1) fires the boom. A limiter sits before the soft clip; check levels with a band analysis of `--soundtrack` output.
 - Captions and the HUD are text cues; `CUE_HUD` and `CUE_EHT` are effect cues without text.
 
 ## Editor

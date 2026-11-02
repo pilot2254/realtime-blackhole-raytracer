@@ -12,6 +12,6 @@ void createPrograms();
 void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx, float jy, float step, bool film);
 void runBloom(const Target& src, std::vector<Target>& mips);
 void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<Target>& mips, float t, float fade,
-               const Overlay& ov, float exposure, float telescope);
+               const Overlay& ov, float exposure, float telescope, float shake = 0.0f);
 float telescopeAmount(float t, bool film);       // EHT view: the manual setting or the film's cue
 void copyTex(GLuint tex, float ox, float oy, float w, float h, float scale);

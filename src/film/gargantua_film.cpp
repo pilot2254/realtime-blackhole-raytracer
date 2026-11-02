@@ -91,7 +91,7 @@ void defaultSequence() {
         {158.0f, 165.0f, CUE_CAPTION,  "Our own speed squeezes the view ahead and makes it brighter. Light from behind us turns red."},
         {166.5f, 173.5f, CUE_CAPTION,  "Here light itself can orbit the hole: closer on the side turning with it, farther on the side turning against it."},
         {176.5f, 180.5f, CUE_CAPTION,  "The ergosphere. Space is dragged around so fast that nothing here can stand still."},
-        {181.0f, 186.5f, CUE_CAPTION,  "The event horizon. We cross it and feel nothing. For a black hole this large, the tides are gentle."},
+        {181.0f, 186.5f, CUE_CAPTION,  "The event horizon. Nothing physical marks the moment we cross it: for a black hole this large, the tides are gentle."},
         {187.0f, 192.5f, CUE_CAPTION,  "Inside a spinning black hole the way down leads to a second, inner horizon."},
         {193.5f, 200.0f, CUE_CAPTION,  "What lies beyond it, no theory can yet tell us."},
         {203.0f, 211.0f, CUE_TITLE,    "GARGANTUA"},
