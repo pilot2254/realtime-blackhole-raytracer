@@ -30,26 +30,42 @@ The HUD shows the real numbers for a 100 million solar-mass black hole: distance
 
 **The editor**
 
-The app opens as an Unreal-style editor:
-- **Menu bar:** File (open/save sequence, screenshot, render video), View (show/hide panels, reset layout, cinema mode, fullscreen), Help (controls).
-- **Toolbar:** Film / Free camera switch, transport (start, play/pause, stop, end, loop), time, playback speed, the **Scalability** dropdown, and Screenshot / Render / Cinema buttons. While a video renders, the progress bar and Cancel button sit here.
-- **Viewport:** the live image. Left-drag orbits, right-drag looks around, the wheel moves closer or farther. Grabbing the view during the film switches to the free camera at the exact current shot.
-- **Panels:** Camera, Black hole, Sky & lens, Film, Sequencer, Render. Drag their tabs to dock them anywhere; View > Reset layout restores the default.
+The app opens as an editor laid out like Unreal Engine 5:
+- **Toolbar:** save/open, a Film / Free Camera switch, transport (start, play/pause, stop, end, loop) and playback speed. On the right: **Scalability**, Screenshot, Render and Cinema.
+- **Viewport:** the live image. Left-drag orbits, right-drag looks around, and the wheel moves closer or farther. Grabbing the view during the film switches to the free camera at the exact current shot. The buttons in its top-left corner switch the camera, the black hole (Kerr / Schwarzschild), the quality and the letterbox.
+- **Outliner:** the scene's objects: Gargantua, Accretion Disk, Sky, Camera, Post Process and Film. The eye icons show or hide the disk and the on-screen text.
+- **Details:** the properties of whatever is selected, in collapsible categories. Select something in the Outliner or the Sequencer to edit it here.
+- **Sequencer:** the film as tracks: camera keys (orange = hovering, blue = free fall), titles & chapters, captions and the HUD. Click a key or a clip to edit it in Details, drag a key to retime it, and click or drag anywhere else to scrub. **K** adds a key from the current view and **Delete** removes the selection. The camera moves along smooth spline curves between keys.
+- **Movie Render Queue:** video settings and the **Render Film** button. You can choose 720p up to 4K, at 24, 30 or 60 fps. "Samples per frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video. Rendering is split into tiles, so heavy 4K frames won't crash your GPU driver.
+- **Status bar:** messages on the left. On the right: the tracer, the preview resolution and quality, and the fps.
 - **Cinema mode (Tab):** the image fills the window with no UI. Tab or Esc brings the editor back.
+
+Drag any panel's tab to dock it somewhere else. Window > Reset Layout restores the default.
 
 The preview always starts on **Low** quality, so it runs on any GPU. Raise it with Scalability (Low, Medium, High, Ultra). Video renders and screenshots always use full quality, whatever the preview is set to.
 
-**What the panels control**
+**Renders**
 
-- **Camera:** Free camera position, lens, look yaw/pitch (to look away from the hole) and a **free fall** slider (0 = hovering on rockets, 1 = falling from far away).
-- **Black hole:** A **gravity slider** (at 0, light travels straight; at 2, lensing is exaggerated), **spin (a/M)** from 0 to 0.998, Doppler, redshift and observer shift, plus the disk: inner edge at the ISCO, radii, temperature, brightness, opacity, swirl speed. Presets: "Physically based" and "Interstellar look" (the film turned the Doppler effect off).
-- **Sky & lens:** Separate strength sliders for each sky layer. Exposure, auto exposure, bloom, vignette, chromatic aberration, and grain.
-- **Film:** Letterbox on/off and its aspect ratio, titles/captions/HUD on/off, fades and the cut to black, and the black hole mass used for the HUD's real-world units.
-- **Sequencer:** A timeline with the camera keys (orange = hovering, blue = free fall), lanes for titles, captions and the HUD, and the playhead; click or drag to scrub. Under it, the key list (add a key at the playhead from the current view, retime, jump, overwrite, delete) and the caption editor. The camera moves along smooth spline curves between keys. File > Save writes the sequence with its captions to a text file.
-- **Render:** Preview quality, then video: 720p up to 4K, at 24, 30, or 60 fps. "Samples / frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
-  - Rendering is split into tiles, so heavy 4K frames won't crash your GPU driver, and the UI stays responsive.
-  - There's also a one-click **Screenshot** (F12) of the current view at export resolution.
+Everything the app renders goes into the `renders\` folder next to the exe, which is created when needed: videos, screenshots (F12), command-line stills, BMP frames when ffmpeg is missing, and `ffmpeg_log.txt`. File > Open Renders Folder opens it.
 
 **Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That's 11,160 frames × 16 samples, so try a 720p render with 4 samples first to check the timing.
 
-**Stills from the command line:** `gargantua_gl.exe --stills 30,72,163 --res 1 --samples 8` saves `still_<time>.png` for each film time and quits (`--res` 0–3 = 720p…4K, `--sequence file.txt` to use your own sequence, `--spin 0.9` to change the spin, `--prefix name_` for the file names).
+**Stills from the command line:** `gargantua_gl.exe --stills 30,72,163 --res 1 --samples 8` saves `renders\still_<time>.png` for each film time and quits. Other options:
+- `--res 0`–`3`: 720p up to 4K
+- `--sequence file.txt`: use your own sequence
+- `--spin 0.9`: change the spin
+- `--prefix name_`: change the file names
+
+**Building**
+
+Run `build.bat`, from an "x64 Native Tools Command Prompt for VS" for MSVC, or from any shell with MinGW `g++` on PATH. The source is split into modules:
+
+| Folder | What's in it |
+| --- | --- |
+| `src/core` | Reusable in any project: vector maths, an OpenGL 3.3 loader with shader/target/uniform helpers, formatting and timing utilities. |
+| `src/sim` | The camera, the scene parameters, and CPU-side relativity (observer velocities, Kerr–Schild fields, horizons, ISCO, auto exposure). |
+| `src/render` | The GLSL shaders, the render passes (scene, bloom, composite), the GDI text overlay, and the video/screenshot exporter. |
+| `src/film` | The sequencer engine (keys, cues, fades, save/load) and `gargantua_film.cpp`, the film itself as data. |
+| `src/editor` | The editor: theme and widgets, Outliner/Details/Movie Render Queue, Sequencer, and the frame (menu, toolbar, status bar, dock layout, viewport). |
+| `src/app` | Application state shared by the modules. |
+| `src/main.cpp` | Window, input and the frame loop. |

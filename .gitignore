@@ -1,6 +1,19 @@
-*.png
-*.ini
-*.mp4
-*.log
-*.txt
+# build output
 *.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+build/
+
+# everything the app renders
+renders/
+*.mp4
+*.png
+*.bmp
+
+# user files written at runtime
+gargantua_ui.ini
+sequence.txt
+*.log
+ffmpeg_log.txt
