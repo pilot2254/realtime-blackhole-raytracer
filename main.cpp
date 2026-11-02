@@ -19,14 +19,15 @@
 //   Frames are piped straight into ffmpeg (H.264 MP4). Without ffmpeg, a BMP image
 //   sequence is written instead.
 //
-//   Controls:  drag = orbit   wheel = zoom   TAB = hide UI   SPACE = play/pause
-//              F11 / ALT+ENTER = fullscreen   ESC = quit
+//   Controls:  viewport left-drag = orbit   right-drag = look   wheel = zoom   SPACE = play/pause
+//              TAB = cinema mode   F11 / ALT+ENTER = fullscreen   F12 = screenshot
 // =====================================================================================
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
+#include <commdlg.h>
 #include <GL/gl.h>
 
 #include <algorithm>
@@ -39,6 +40,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "imgui_internal.h"     // DockBuilder, BeginViewportSideBar
 #include "imgui_impl_win32.h"
 #include "imgui_impl_opengl3.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -48,6 +50,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "comdlg32.lib")
 #pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 #endif
 
@@ -744,7 +747,7 @@ static CamFrame camBasis(const CamState& c) {
 
 // ============================================================================= app state
 struct Params {
-    float renderScale = 1.0f; bool ultra = false;
+    float renderScale = 0.35f; bool ultra = false;       // = Scalability "Low"
     float gravity = 1.0f, doppler = 1.0f, redshift = 1.0f;
     bool  disk = true;
     float diskIn = 3.0f, diskOut = 16.0f, tempPeak = 8000.0f, diskBright = 1.25f, diskOpacity = 1.8f;
@@ -1532,28 +1535,85 @@ static void exportStep() {
 }
 
 // ============================================================================= UI
+static void toggleFullscreen();
+
+// ============================================================================= editor UI
+// Unreal-style editor: main menu, transport toolbar, dockable panels around the viewport, and a
+// sequencer timeline. TAB switches to a clean full-window cinema view.
+enum { Q_LOW = 0, Q_MEDIUM, Q_HIGH, Q_ULTRA };
+static const char* QUALITY_NAMES[] = {"Low", "Medium", "High", "Ultra"};
+static int g_quality = Q_LOW;
+static void applyQuality(int q) {
+    static const float scale[] = {0.35f, 0.6f, 1.0f, 1.0f};
+    g_quality = q; P.renderScale = scale[q]; P.ultra = q == Q_ULTRA;
+}
+
+static bool g_resetLayout = false, g_showHelp = false;
+static bool g_winCamera = true, g_winBlackHole = true, g_winSky = true, g_winSequencer = true, g_winFilm = true, g_winRender = true;
+static double g_cinemaSince = -100.0;
+
+// the viewport panel reserves its rect; the image goes into its draw list once the scene is rendered
+static ImDrawList* g_viewDL = nullptr;
+static ImVec2 g_viewMin, g_viewMax;
+static int g_viewW = 0, g_viewH = 0;
+
+static const ImVec4 ACCENT(1.00f, 0.55f, 0.18f, 1.0f), ACCENT_DIM(0.70f, 0.36f, 0.10f, 1.0f);
+
+static double nowSeconds() { LARGE_INTEGER f, n; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&n); return double(n.QuadPart) / double(f.QuadPart); }
+static void enterCinema() { g_showUI = false; g_cinemaSince = nowSeconds(); }
+
+static std::string mmss(float t) {
+    t = std::max(0.0f, t);
+    char b[32]; std::snprintf(b, sizeof b, "%d:%04.1f", (int)(t / 60), std::fmod(t, 60.0f));
+    return b;
+}
+
 static void applyStyle() {
     ImGui::StyleColorsDark();
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 8; s.FrameRounding = 4; s.GrabRounding = 4; s.PopupRounding = 4;
-    s.WindowBorderSize = 0; s.FramePadding = ImVec2(8, 4); s.ItemSpacing = ImVec2(8, 6);
+    s.WindowRounding = 0; s.ChildRounding = 0; s.FrameRounding = 3; s.GrabRounding = 3; s.PopupRounding = 3; s.TabRounding = 3;
+    s.WindowBorderSize = 1; s.FrameBorderSize = 0; s.PopupBorderSize = 1;
+    s.WindowPadding = ImVec2(10, 8); s.FramePadding = ImVec2(8, 4); s.ItemSpacing = ImVec2(8, 6);
+    s.WindowMenuButtonPosition = ImGuiDir_None;
     ImVec4* c = s.Colors;
-    ImVec4 accent(1.00f, 0.55f, 0.18f, 1.0f), accentDim(0.75f, 0.38f, 0.10f, 1.0f);
-    c[ImGuiCol_WindowBg]         = ImVec4(0.05f, 0.05f, 0.07f, 0.88f);
-    c[ImGuiCol_Header]           = ImVec4(0.30f, 0.16f, 0.06f, 0.80f);
-    c[ImGuiCol_HeaderHovered]    = accentDim;
-    c[ImGuiCol_HeaderActive]     = accent;
-    c[ImGuiCol_Button]           = ImVec4(0.28f, 0.15f, 0.06f, 1.0f);
-    c[ImGuiCol_ButtonHovered]    = accentDim;
-    c[ImGuiCol_ButtonActive]     = accent;
-    c[ImGuiCol_FrameBg]          = ImVec4(0.14f, 0.11f, 0.10f, 1.0f);
-    c[ImGuiCol_FrameBgHovered]   = ImVec4(0.24f, 0.16f, 0.10f, 1.0f);
-    c[ImGuiCol_FrameBgActive]    = ImVec4(0.32f, 0.20f, 0.10f, 1.0f);
-    c[ImGuiCol_SliderGrab]       = accentDim;
-    c[ImGuiCol_SliderGrabActive] = accent;
-    c[ImGuiCol_CheckMark]        = accent;
-    c[ImGuiCol_TitleBgActive]    = ImVec4(0.30f, 0.16f, 0.06f, 1.0f);
-    c[ImGuiCol_PlotHistogram]    = accent;
+    auto grey = [](float v, float a) { return ImVec4(v, v, v * 1.05f, a); };
+    c[ImGuiCol_WindowBg]                  = grey(0.090f, 1.0f);
+    c[ImGuiCol_ChildBg]                   = grey(0.090f, 1.0f);
+    c[ImGuiCol_PopupBg]                   = grey(0.070f, 0.98f);
+    c[ImGuiCol_MenuBarBg]                 = grey(0.055f, 1.0f);
+    c[ImGuiCol_TitleBg]                   = grey(0.055f, 1.0f);
+    c[ImGuiCol_TitleBgActive]             = grey(0.055f, 1.0f);
+    c[ImGuiCol_TitleBgCollapsed]          = grey(0.055f, 1.0f);
+    c[ImGuiCol_Border]                    = grey(0.030f, 1.0f);
+    c[ImGuiCol_FrameBg]                   = grey(0.050f, 1.0f);
+    c[ImGuiCol_FrameBgHovered]            = grey(0.120f, 1.0f);
+    c[ImGuiCol_FrameBgActive]             = grey(0.150f, 1.0f);
+    c[ImGuiCol_Button]                    = grey(0.165f, 1.0f);
+    c[ImGuiCol_ButtonHovered]             = grey(0.240f, 1.0f);
+    c[ImGuiCol_ButtonActive]              = ACCENT_DIM;
+    c[ImGuiCol_Header]                    = grey(0.160f, 1.0f);
+    c[ImGuiCol_HeaderHovered]             = grey(0.220f, 1.0f);
+    c[ImGuiCol_HeaderActive]              = ACCENT_DIM;
+    c[ImGuiCol_Tab]                       = grey(0.055f, 1.0f);
+    c[ImGuiCol_TabHovered]                = grey(0.200f, 1.0f);
+    c[ImGuiCol_TabSelected]               = grey(0.090f, 1.0f);
+    c[ImGuiCol_TabSelectedOverline]       = ACCENT;
+    c[ImGuiCol_TabDimmed]                 = grey(0.055f, 1.0f);
+    c[ImGuiCol_TabDimmedSelected]         = grey(0.090f, 1.0f);
+    c[ImGuiCol_TabDimmedSelectedOverline] = grey(0.300f, 1.0f);
+    c[ImGuiCol_DockingPreview]            = ImVec4(1.0f, 0.55f, 0.18f, 0.45f);
+    c[ImGuiCol_DockingEmptyBg]            = grey(0.030f, 1.0f);
+    c[ImGuiCol_Separator]                 = grey(0.030f, 1.0f);
+    c[ImGuiCol_SeparatorHovered]          = ACCENT_DIM;
+    c[ImGuiCol_SeparatorActive]           = ACCENT;
+    c[ImGuiCol_ResizeGrip]                = grey(0.2f, 0.0f);
+    c[ImGuiCol_ResizeGripHovered]         = ACCENT_DIM;
+    c[ImGuiCol_ResizeGripActive]          = ACCENT;
+    c[ImGuiCol_SliderGrab]                = ACCENT_DIM;
+    c[ImGuiCol_SliderGrabActive]          = ACCENT;
+    c[ImGuiCol_CheckMark]                 = ACCENT;
+    c[ImGuiCol_PlotHistogram]             = ACCENT;
+    c[ImGuiCol_TextSelectedBg]            = ImVec4(1.0f, 0.55f, 0.18f, 0.35f);
     s.ScaleAllSizes(g_dpi);
 #if IMGUI_VERSION_NUM >= 19200
     s.FontScaleDpi = g_dpi;
@@ -1568,73 +1628,280 @@ static bool fovSlider(const char* label, float* tanHalf) {
     return false;
 }
 
-static void drawUI(float fps, int rw, int rh) {
-    if (!g_showUI) return;
-    ImGui::SetNextWindowPos(ImVec2(12 * g_dpi, 12 * g_dpi), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(430 * g_dpi, 760 * g_dpi), ImGuiCond_FirstUseEver);
-    ImGui::Begin("GARGANTUA STUDIO");
+// ---------------------------------------------------------------- file dialogs
+static bool fileDialog(bool save, char* path, int size, const char* filter, const char* ext) {
+    char buf[MAX_PATH]; std::snprintf(buf, sizeof buf, "%s", path);
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof ofn; ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = filter; ofn.lpstrFile = buf; ofn.nMaxFile = sizeof buf; ofn.lpstrDefExt = ext;
+    ofn.Flags = OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+    if (!(save ? GetSaveFileNameA(&ofn) : GetOpenFileNameA(&ofn))) return false;
+    std::snprintf(path, size, "%s", buf);
+    return true;
+}
+static const char* SEQ_FILTER = "Sequence (*.txt)\0*.txt\0All files\0*.*\0";
+static void menuOpenSequence() {
+    if (fileDialog(false, g_seqPath, sizeof g_seqPath, SEQ_FILTER, "txt"))
+        g_status = loadSequence(g_seqPath) ? "Opened " + std::string(g_seqPath) : "Could not open " + std::string(g_seqPath);
+}
+static void menuSaveSequence(bool ask) {
+    if (ask && !fileDialog(true, g_seqPath, sizeof g_seqPath, SEQ_FILTER, "txt")) return;
+    g_status = saveSequence(g_seqPath) ? "Saved " + std::string(g_seqPath) : "Could not save " + std::string(g_seqPath);
+}
 
-    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.25f, 1.0f), "%.0f fps", fps);
-    ImGui::SameLine(); ImGui::TextDisabled("| %dx%d | TAB hides UI", rw, rh);
-
-    // ---------------------------------------------------------------- export (locks the rest while running)
-    if (g_job.active) {
-        ExportJob& j = g_job;
-        ImGui::Separator();
-        ImGui::Text(j.screenshot ? "Rendering screenshot %dx%d" : "Rendering video %dx%d @ %d fps", j.W, j.H, j.fps);
-        int tiles = ((j.W + TILE - 1) / TILE) * ((j.H + TILE - 1) / TILE);
-        float sub  = (j.sub + j.tile / (float)tiles) / j.samples;
-        float prog = (j.frame + sub) / (float)j.total;
-        char ov[64]; std::snprintf(ov, sizeof ov, "frame %d / %d", std::min(j.frame + 1, j.total), j.total);
-        ImGui::ProgressBar(prog, ImVec2(-1, 0), ov);
-        double el = secondsSince(j.t0);
-        double eta = prog > 0.001f ? el / prog * (1.0 - prog) : 0.0;
-        ImGui::Text("elapsed %02d:%02d   remaining ~%02d:%02d", (int)el / 60, (int)el % 60, (int)eta / 60, (int)eta % 60);
-        ImGui::TextDisabled(j.useFfmpeg ? "-> %s (ffmpeg)" : "-> BMP frames (ffmpeg not found)", j.out.c_str());
-        if (ImGui::Button("Cancel", ImVec2(-1, 0))) endExport(true);
-        ImGui::End();
-        return;
+// ---------------------------------------------------------------- toolbar icons
+enum { IC_PLAY, IC_PAUSE, IC_STOP, IC_START, IC_END, IC_LOOP, IC_SHOT, IC_RECORD, IC_CINEMA };
+static bool iconButton(const char* id, int icon, bool active, const char* tip) {
+    float h = ImGui::GetFrameHeight();
+    if (active) ImGui::PushStyleColor(ImGuiCol_Button, ACCENT_DIM);
+    bool pressed = ImGui::Button(id, ImVec2(h * 1.35f, h));
+    if (active) ImGui::PopStyleColor();
+    if (tip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", tip);
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    float cx = (a.x + b.x) * 0.5f, cy = (a.y + b.y) * 0.5f, s = h * 0.24f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    switch (icon) {
+    case IC_PLAY:  dl->AddTriangleFilled(ImVec2(cx - s * 0.8f, cy - s), ImVec2(cx - s * 0.8f, cy + s), ImVec2(cx + s, cy), col); break;
+    case IC_PAUSE: dl->AddRectFilled(ImVec2(cx - s * 0.8f, cy - s), ImVec2(cx - s * 0.25f, cy + s), col);
+                   dl->AddRectFilled(ImVec2(cx + s * 0.25f, cy - s), ImVec2(cx + s * 0.8f, cy + s), col); break;
+    case IC_STOP:  dl->AddRectFilled(ImVec2(cx - s * 0.8f, cy - s * 0.8f), ImVec2(cx + s * 0.8f, cy + s * 0.8f), col); break;
+    case IC_START: dl->AddRectFilled(ImVec2(cx - s, cy - s), ImVec2(cx - s * 0.65f, cy + s), col);
+                   dl->AddTriangleFilled(ImVec2(cx + s, cy - s), ImVec2(cx + s, cy + s), ImVec2(cx - s * 0.6f, cy), col); break;
+    case IC_END:   dl->AddRectFilled(ImVec2(cx + s * 0.65f, cy - s), ImVec2(cx + s, cy + s), col);
+                   dl->AddTriangleFilled(ImVec2(cx - s, cy - s), ImVec2(cx - s, cy + s), ImVec2(cx + s * 0.6f, cy), col); break;
+    case IC_LOOP:  dl->PathArcTo(ImVec2(cx, cy), s * 0.9f, 0.6f, 5.6f, 16); dl->PathStroke(col, 0, h * 0.07f);
+                   dl->AddTriangleFilled(ImVec2(cx + s * 0.35f, cy - s * 1.25f), ImVec2(cx + s * 0.35f, cy - s * 0.15f),
+                                         ImVec2(cx + s * 1.15f, cy - s * 0.7f), col); break;
+    case IC_SHOT:  dl->AddRect(ImVec2(cx - s * 1.1f, cy - s * 0.65f), ImVec2(cx + s * 1.1f, cy + s * 0.85f), col, 2.0f, 0, h * 0.06f);
+                   dl->AddRectFilled(ImVec2(cx - s * 0.45f, cy - s * 0.95f), ImVec2(cx + s * 0.45f, cy - s * 0.65f), col);
+                   dl->AddCircle(ImVec2(cx, cy + s * 0.1f), s * 0.42f, col, 16, h * 0.06f); break;
+    case IC_RECORD: dl->AddCircleFilled(ImVec2(cx, cy), s * 0.85f, IM_COL32(235, 70, 55, 255), 20); break;
+    case IC_CINEMA: dl->AddRect(ImVec2(cx - s * 1.2f, cy - s * 0.8f), ImVec2(cx + s * 1.2f, cy + s * 0.8f), col, 1.0f, 0, h * 0.06f);
+                    dl->AddRectFilled(ImVec2(cx - s * 1.2f, cy - s * 0.8f), ImVec2(cx + s * 1.2f, cy - s * 0.45f), col);
+                    dl->AddRectFilled(ImVec2(cx - s * 1.2f, cy + s * 0.45f), ImVec2(cx + s * 1.2f, cy + s * 0.8f), col); break;
     }
+    return pressed;
+}
+static void toolbarSeparator() {
+    ImGui::SameLine();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float h = ImGui::GetFrameHeight();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 2, p.y + h * 0.15f), ImVec2(p.x + 2, p.y + h * 0.85f), ImGui::GetColorU32(ImGuiCol_Border), 2.0f);
+    ImGui::Dummy(ImVec2(6, h));
+    ImGui::SameLine();
+}
 
-    // ---------------------------------------------------------------- camera
-    if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::RadioButton("Free orbit", &g_camMode, CAM_ORBIT); ImGui::SameLine();
-        ImGui::RadioButton("Play sequence", &g_camMode, CAM_SEQUENCE);
+static void playFilm()  { if (g_camMode != CAM_SEQUENCE) g_camMode = CAM_SEQUENCE; g_playing = !g_playing; }
+static void stopFilm()  { g_camMode = CAM_SEQUENCE; g_playing = false; g_playhead = 0; }
+
+// ---------------------------------------------------------------- menu bar + toolbar
+static void drawMenuBar() {
+    if (!ImGui::BeginMainMenuBar()) return;
+    bool busy = g_job.active;
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Open sequence...", "Ctrl+O", false, !busy)) menuOpenSequence();
+        if (ImGui::MenuItem("Save sequence", "Ctrl+S", false, !busy)) menuSaveSequence(false);
+        if (ImGui::MenuItem("Save sequence as...", nullptr, false, !busy)) menuSaveSequence(true);
+        if (ImGui::MenuItem("Load the default film", nullptr, false, !busy)) defaultSequence();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Screenshot", "F12", false, !busy)) beginExport(true);
+        if (ImGui::MenuItem("Render video", nullptr, false, !busy)) beginExport(false);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit")) g_running = false;
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+        ImGui::MenuItem("Camera", nullptr, &g_winCamera);
+        ImGui::MenuItem("Black hole", nullptr, &g_winBlackHole);
+        ImGui::MenuItem("Sky & lens", nullptr, &g_winSky);
+        ImGui::MenuItem("Film", nullptr, &g_winFilm);
+        ImGui::MenuItem("Sequencer", nullptr, &g_winSequencer);
+        ImGui::MenuItem("Render", nullptr, &g_winRender);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset layout")) {
+            g_resetLayout = true;
+            g_winCamera = g_winBlackHole = g_winSky = g_winSequencer = g_winFilm = g_winRender = true;
+        }
+        if (ImGui::MenuItem("Cinema mode", "Tab")) enterCinema();
+        if (ImGui::MenuItem("Fullscreen", "F11", g_fullscreen)) toggleFullscreen();
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("Controls")) g_showHelp = true;
+        ImGui::EndMenu();
+    }
+    const char* title = "GARGANTUA STUDIO";
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(title).x - ImGui::GetStyle().WindowPadding.x * 2);
+    ImGui::TextDisabled("%s", title);
+    ImGui::EndMainMenuBar();
+}
+
+static void drawToolbar(float fps) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8 * g_dpi, 7 * g_dpi));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8 * g_dpi, 6 * g_dpi));
+    float h = ImGui::GetFrameHeight() + 12 * g_dpi;
+    ImGuiWindowFlags fl = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse;
+    if (ImGui::BeginViewportSideBar("##toolbar", vp, ImGuiDir_Up, h, fl)) {
+        bool busy = g_job.active;
+        ImGui::BeginDisabled(busy);
+        // camera source, like Unreal's play-mode selector
+        bool film = g_camMode == CAM_SEQUENCE;
+        if (film) ImGui::PushStyleColor(ImGuiCol_Button, ACCENT_DIM);
+        if (ImGui::Button("Film")) g_camMode = CAM_SEQUENCE;
+        if (film) ImGui::PopStyleColor();
+        ImGui::SameLine(0, 2);
+        if (!film) ImGui::PushStyleColor(ImGuiCol_Button, ACCENT_DIM);
+        if (ImGui::Button("Free camera")) grabCamera();
+        if (!film) ImGui::PopStyleColor();
+        toolbarSeparator();
+
+        if (iconButton("##start", IC_START, false, "Go to start")) { g_camMode = CAM_SEQUENCE; g_playhead = 0; }
+        ImGui::SameLine(0, 2);
+        bool playing = film && g_playing;
+        if (iconButton("##play", playing ? IC_PAUSE : IC_PLAY, playing, playing ? "Pause (Space)" : "Play (Space)")) playFilm();
+        ImGui::SameLine(0, 2);
+        if (iconButton("##stop", IC_STOP, false, "Stop and rewind")) stopFilm();
+        ImGui::SameLine(0, 2);
+        if (iconButton("##end", IC_END, false, "Go to end")) { g_camMode = CAM_SEQUENCE; g_playhead = seqLength(); g_playing = false; }
+        ImGui::SameLine(0, 2);
+        if (iconButton("##loop", IC_LOOP, g_loop, "Loop")) g_loop = !g_loop;
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%s / %s", mmss(g_playhead).c_str(), mmss(seqLength()).c_str());
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80 * g_dpi);
+        ImGui::SliderFloat("##speed", &g_playSpeed, 0.1f, 4.0f, "%.1fx");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Playback speed");
+        toolbarSeparator();
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Scalability");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100 * g_dpi);
+        if (ImGui::BeginCombo("##quality", QUALITY_NAMES[g_quality])) {
+            for (int q = 0; q < 4; q++) if (ImGui::Selectable(QUALITY_NAMES[q], q == g_quality)) applyQuality(q);
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Real-time preview quality only. Video renders always use full quality.");
+        toolbarSeparator();
+        if (iconButton("##shot", IC_SHOT, false, "Screenshot at render resolution (F12)")) beginExport(true);
+        ImGui::SameLine(0, 2);
+        if (iconButton("##render", IC_RECORD, false, "Render the film to video")) beginExport(false);
+        ImGui::SameLine(0, 2);
+        if (iconButton("##cinema", IC_CINEMA, false, "Cinema mode (Tab)")) enterCinema();
+        ImGui::EndDisabled();
+
+        if (busy) {
+            ExportJob& j = g_job;
+            int tiles = ((j.W + TILE - 1) / TILE) * ((j.H + TILE - 1) / TILE);
+            float prog = (j.frame + (j.sub + j.tile / (float)tiles) / j.samples) / (float)j.total;
+            double el = secondsSince(j.t0), eta = prog > 0.001f ? el / prog * (1.0 - prog) : 0.0;
+            char ov[96]; std::snprintf(ov, sizeof ov, "frame %d / %d   ~%02d:%02d left", std::min(j.frame + 1, j.total), j.total,
+                                       (int)eta / 60, (int)eta % 60);
+            ImGui::SameLine();
+            ImGui::ProgressBar(prog, ImVec2(260 * g_dpi, 0), ov);
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) endExport(true);
+        }
+
+        char right[64]; std::snprintf(right, sizeof right, "%.0f fps", fps);
+        float rw = ImGui::CalcTextSize(right).x;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10, ImGui::GetWindowWidth() - rw - 14 * g_dpi));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(fps < 20 ? ImVec4(1.0f, 0.4f, 0.3f, 1.0f) : ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "%s", right);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+// ---------------------------------------------------------------- docking layout
+static void drawDockspace() {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGuiID id = ImGui::GetID("MainDockSpace");
+    if (g_resetLayout || !ImGui::DockBuilderGetNode(id)) {
+        g_resetLayout = false;
+        ImGui::DockBuilderRemoveNode(id);
+        ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(id, vp->WorkSize);
+        ImGuiID center = id;
+        ImGuiID right    = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
+        ImGuiID bottom   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, nullptr, &center);
+        ImGuiID rightLow = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.55f, nullptr, &right);
+        ImGui::DockBuilderDockWindow("Viewport", center);
+        ImGui::DockBuilderDockWindow("Sequencer", bottom);
+        ImGui::DockBuilderDockWindow("Render", bottom);
+        ImGui::DockBuilderDockWindow("Camera", right);
+        ImGui::DockBuilderDockWindow("Film", right);
+        ImGui::DockBuilderDockWindow("Black hole", rightLow);
+        ImGui::DockBuilderDockWindow("Sky & lens", rightLow);
+        ImGui::DockBuilderFinish(id);
+    }
+    ImGui::DockSpaceOverViewport(id, vp);
+}
+
+// ---------------------------------------------------------------- panels
+static void panelCamera() {
+    if (!g_winCamera) return;
+    if (ImGui::Begin("Camera", &g_winCamera)) {
+        ImGui::RadioButton("Film camera", &g_camMode, CAM_SEQUENCE); ImGui::SameLine();
+        if (ImGui::RadioButton("Free camera", g_camMode == CAM_ORBIT)) grabCamera();
         if (g_camMode == CAM_ORBIT) {
             ImGui::Checkbox("Auto-rotate", &g_autoRotate); ImGui::SameLine();
             ImGui::Checkbox("Cinematic drift", &g_drift);
             ImGui::SliderFloat("Rotate speed", &g_rotSpeed, -0.6f, 0.6f, "%.2f rad/s");
+            ImGui::SeparatorText("Position");
             float wrapped = std::remainder(g_orbit.phi, 2 * PI);
             if (ImGui::SliderAngle("Azimuth", &wrapped, -180, 180)) g_orbit.phi = wrapped;
             ImGui::SliderAngle("Elevation", &g_orbit.el, -88, 88);
             ImGui::SliderFloat("Distance", &g_orbit.dist, MIN_DIST, 300.0f, "%.2f r_s", ImGuiSliderFlags_Logarithmic);
+            ImGui::SeparatorText("Lens");
             ImGui::SliderAngle("Roll", &g_orbit.roll, -60, 60);
             fovSlider("Field of view", &g_orbit.fov);
             ImGui::SliderAngle("Look yaw", &g_orbit.yaw, -180, 180);
             ImGui::SliderAngle("Look pitch", &g_orbit.pitch, -89, 89);
+            ImGui::SeparatorText("Motion");
             ImGui::SliderFloat("Free fall", &g_orbit.fall, 0.0f, 1.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = hovering on rockets, 1 = falling freely from far away.\n"
                                                           "Near and inside the horizon nothing can hover, so the camera falls anyway.");
-            ImGui::TextDisabled("Drag the viewport to orbit, wheel to zoom.");
         } else {
-            ImGui::TextDisabled("Grabbing the view switches to free orbit.");
+            ImGui::TextDisabled("The camera follows the film's keys.");
         }
         ImGui::Checkbox("Pause time", &g_paused);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Viewport: left-drag orbit, right-drag look, wheel zoom.");
     }
+    ImGui::End();
+}
 
-    // ---------------------------------------------------------------- physics
-    if (ImGui::CollapsingHeader("Black hole & disk", ImGuiTreeNodeFlags_DefaultOpen)) {
+static void panelBlackHole() {
+    if (!g_winBlackHole) return;
+    if (ImGui::Begin("Black hole", &g_winBlackHole)) {
+        if (ImGui::Button("Physically based")) { P.doppler = 1; P.redshift = 1; P.tempPeak = 8000; P.diskBright = 1.25f; P.glow = 0.005f; }
+        ImGui::SameLine();
+        if (ImGui::Button("Interstellar look")) { P.spin = 0.6f; P.doppler = 0; P.redshift = 0.3f; P.tempPeak = 5200; P.diskBright = 1.6f; P.glow = 0.008f; }
+        ImGui::SeparatorText("Spacetime");
         ImGui::SliderFloat("Gravity (lensing)", &P.gravity, 0.0f, 2.0f, "%.2f x");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = light travels in straight lines. See what gravity is doing.");
-        ImGui::SliderFloat("Doppler beaming", &P.doppler, 0.0f, 1.0f);
-        ImGui::SliderFloat("Grav. redshift", &P.redshift, 0.0f, 1.0f);
-        ImGui::Checkbox("Accretion disk", &P.disk);
         ImGui::SliderFloat("Spin (a/M)", &P.spin, 0.0f, 0.998f, "%.3f");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = Schwarzschild (fast tracer). Above 0 the Kerr tracer runs:\n"
                                                       "frame dragging, a lopsided shadow, the disk reaching closer in.");
-        ImGui::Checkbox("Disk starts at the ISCO", &P.iscoEdge);
+        if (P.spin > 0.0f)
+            ImGui::TextDisabled("horizons %.2f / %.2f r_s | ISCO %.2f r_s", horizonRs(P.spin, 1.0f), horizonRs(P.spin, -1.0f), iscoRs(P.spin));
+        else
+            ImGui::TextDisabled("horizon 1 r_s | photon sphere 1.5 r_s | ISCO 3 r_s");
+        ImGui::SliderFloat("Doppler beaming", &P.doppler, 0.0f, 1.0f);
+        ImGui::SliderFloat("Grav. redshift", &P.redshift, 0.0f, 1.0f);
+        ImGui::SliderFloat("Observer shift", &P.obsShift, 0.0f, 1.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Doppler and gravitational shift caused by the camera's own motion and depth.\n"
+                                                      "Falling in, light ahead turns blue and bright, light behind turns red.");
+        ImGui::SeparatorText("Accretion disk");
+        ImGui::Checkbox("Visible", &P.disk); ImGui::SameLine();
+        ImGui::Checkbox("Inner edge at the ISCO", &P.iscoEdge);
         ImGui::BeginDisabled(P.iscoEdge);
-        ImGui::DragFloatRange2("Disk radii", &P.diskIn, &P.diskOut, 0.05f, 0.5f, 40.0f, "in %.2f r_s", "out %.1f r_s");
+        ImGui::DragFloatRange2("Radii", &P.diskIn, &P.diskOut, 0.05f, 0.5f, 40.0f, "in %.2f r_s", "out %.1f r_s");
         ImGui::EndDisabled();
         P.diskOut = std::max(P.diskOut, P.diskIn + 0.5f);
         ImGui::SliderFloat("Temperature", &P.tempPeak, 1500.0f, 30000.0f, "%.0f K", ImGuiSliderFlags_Logarithmic);
@@ -1642,155 +1909,329 @@ static void drawUI(float fps, int rw, int rh) {
         ImGui::SliderFloat("Opacity", &P.diskOpacity, 0.0f, 5.0f);
         ImGui::SliderFloat("Swirl speed", &P.swirl, 0.0f, 4.0f);
         ImGui::SliderFloat("Photon glow", &P.glow, 0.0f, 0.04f, "%.3f");
-        ImGui::SliderFloat("Observer shift", &P.obsShift, 0.0f, 1.0f);
-        ImGui::SliderFloat("Auto exposure", &P.autoExposure, 0.0f, 1.0f);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Doppler and gravitational shift caused by the camera's own motion and depth.\n"
-                                                      "Falling in, light ahead turns blue and bright, light behind turns red.");
-        if (ImGui::Button("Physically based")) { P.doppler = 1; P.redshift = 1; P.tempPeak = 8000; P.diskBright = 1.25f; P.glow = 0.005f; }
-        ImGui::SameLine();
-        if (ImGui::Button("Interstellar look")) { P.spin = 0.6f; P.doppler = 0; P.redshift = 0.3f; P.tempPeak = 5200; P.diskBright = 1.6f; P.glow = 0.008f; }
-        if (P.spin > 0.0f)
-            ImGui::TextDisabled("horizon %.2f r_s | ISCO %.2f r_s", horizonRs(P.spin, 1.0f), iscoRs(P.spin));
-        else
-            ImGui::TextDisabled("horizon 1 r_s | photon sphere 1.5 r_s | ISCO 3 r_s");
     }
+    ImGui::End();
+}
 
-    // ---------------------------------------------------------------- sky
-    if (ImGui::CollapsingHeader("Sky")) {
+static void panelSky() {
+    if (!g_winSky) return;
+    if (ImGui::Begin("Sky & lens", &g_winSky)) {
+        ImGui::SeparatorText("Sky");
         ImGui::SliderFloat("Stars", &P.stars, 0.0f, 3.0f);
         ImGui::SliderFloat("Milky Way", &P.milky, 0.0f, 3.0f);
         ImGui::SliderFloat("Nebulae", &P.nebula, 0.0f, 3.0f);
         ImGui::SliderFloat("Spiral galaxy", &P.galaxy, 0.0f, 3.0f);
-    }
-
-    // ---------------------------------------------------------------- post
-    if (ImGui::CollapsingHeader("Lens & post")) {
+        ImGui::SeparatorText("Lens & post");
         ImGui::SliderFloat("Exposure", &P.exposure, 0.1f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Auto exposure", &P.autoExposure, 0.0f, 1.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stops the lens down when everything ahead is blueshifted and bright.");
         ImGui::SliderFloat("Bloom", &P.bloom, 0.0f, 0.4f);
         ImGui::SliderFloat("Vignette", &P.vignette, 0.0f, 1.0f);
         ImGui::SliderFloat("Chromatic aberr.", &P.ca, 0.0f, 0.05f, "%.3f");
         ImGui::SliderFloat("Film grain", &P.grain, 0.0f, 10.0f);
     }
+    ImGui::End();
+}
 
-    // ---------------------------------------------------------------- quality
-    if (ImGui::CollapsingHeader("Quality")) {
-        ImGui::SliderFloat("Render scale", &P.renderScale, 0.25f, 2.0f, "%.2f x");
-        ImGui::Checkbox("Ultra geodesic integration", &P.ultra);
-        ImGui::TextDisabled("Lower the render scale if the frame rate drops.");
-    }
-
-    // ---------------------------------------------------------------- sequence
-    if (ImGui::CollapsingHeader("Sequence", ImGuiTreeNodeFlags_DefaultOpen)) {
-        float L = seqLength();
-        if (ImGui::Button(g_playing ? "Pause" : "Play", ImVec2(70 * g_dpi, 0))) { g_playing = !g_playing; g_camMode = CAM_SEQUENCE; }
-        ImGui::SameLine();
-        if (ImGui::Button("|<")) { g_playhead = 0; g_camMode = CAM_SEQUENCE; }
-        ImGui::SameLine();
-        ImGui::Checkbox("Loop", &g_loop);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90 * g_dpi);
-        ImGui::SliderFloat("##speed", &g_playSpeed, 0.1f, 4.0f, "%.1fx speed");
-        if (ImGui::SliderFloat("Playhead", &g_playhead, 0.0f, std::max(L, 0.01f), "%.2f s")) g_camMode = CAM_SEQUENCE;
-        ImGui::SetNextItemWidth(70 * g_dpi);
-        ImGui::DragFloat("Fade in", &g_fadeIn, 0.05f, 0.0f, 10.0f, "%.1f s"); ImGui::SameLine();
-        ImGui::SetNextItemWidth(70 * g_dpi);
-        ImGui::DragFloat("Fade out", &g_fadeOut, 0.05f, 0.0f, 10.0f, "%.2f s"); ImGui::SameLine();
-        ImGui::SetNextItemWidth(70 * g_dpi);
-        ImGui::DragFloat("Black at", &g_blackAt, 0.1f, 0.0f, 600.0f, g_blackAt > 0 ? "%.1f s" : "end");
-
-        if (ImGui::Button("Add key at playhead (current view)")) { addKey(g_playhead, currentCam()); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame a shot in free orbit, move the playhead, click.");
-
-        if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY,
-                              ImVec2(0, 190 * g_dpi))) {
-            ImGui::TableSetupColumn("time", ImGuiTableColumnFlags_WidthFixed, 80 * g_dpi);
-            ImGui::TableSetupColumn("view", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 90 * g_dpi);
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 22 * g_dpi);
-            ImGui::TableHeadersRow();
-            int del = -1;
-            bool resort = false;
-            for (int i = 0; i < (int)g_keys.size(); i++) {
-                Key& k = g_keys[i];
-                ImGui::PushID(i);
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::SetNextItemWidth(-1);
-                ImGui::DragFloat("##t", &k.t, 0.05f, 0.0f, 600.0f, "%.2f");
-                if (ImGui::IsItemDeactivatedAfterEdit()) resort = true;
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("r %.2f  el %.0f  fov %.0f%s", k.c.dist, k.c.el * 180 / PI, 2 * std::atan(k.c.fov) * 180 / PI,
-                            k.c.fall > 0.5f ? "  falling" : "");
-                ImGui::TableSetColumnIndex(2);
-                if (ImGui::SmallButton("Go")) { g_playhead = k.t; g_camMode = CAM_SEQUENCE; g_playing = false; }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Set")) { CamState c = currentCam(); k.c = c; }
-                ImGui::TableSetColumnIndex(3);
-                if (ImGui::SmallButton("x")) del = i;
-                ImGui::PopID();
-            }
-            if (del >= 0) g_keys.erase(g_keys.begin() + del);
-            if (resort) sortKeys();
-            ImGui::EndTable();
-        }
-        ImGui::SetNextItemWidth(160 * g_dpi);
-        ImGui::InputText("##seqpath", g_seqPath, sizeof g_seqPath); ImGui::SameLine();
-        if (ImGui::Button("Save")) g_status = saveSequence(g_seqPath) ? "Sequence saved." : "Could not save sequence.";
-        ImGui::SameLine();
-        if (ImGui::Button("Load")) g_status = loadSequence(g_seqPath) ? "Sequence loaded." : "Could not load sequence.";
-        ImGui::SameLine();
-        if (ImGui::Button("Default film")) defaultSequence();
-    }
-
-    // ---------------------------------------------------------------- film
-    if (ImGui::CollapsingHeader("Film")) {
+static void panelFilm() {
+    if (!g_winFilm) return;
+    if (ImGui::Begin("Film", &g_winFilm)) {
+        ImGui::SeparatorText("Frame");
         ImGui::Checkbox("Letterbox", &g_letterboxOn); ImGui::SameLine();
-        ImGui::SetNextItemWidth(120 * g_dpi);
+        ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##aspect", &g_letterbox, 1.78f, 2.76f, "%.2f : 1");
         ImGui::Checkbox("Titles, captions & HUD", &g_cuesOn);
+        ImGui::SeparatorText("Fades");
+        ImGui::DragFloat("Fade in", &g_fadeIn, 0.05f, 0.0f, 10.0f, "%.1f s");
+        ImGui::DragFloat("Fade out", &g_fadeOut, 0.05f, 0.0f, 10.0f, "%.2f s");
+        ImGui::DragFloat("Cut to black at", &g_blackAt, 0.1f, 0.0f, 600.0f, g_blackAt > 0 ? "%.1f s" : "end");
+        ImGui::SeparatorText("HUD units");
         ImGui::SliderFloat("Mass (suns)", &g_massSun, 5.0f, 1.0e10f, "%.3g", ImGuiSliderFlags_Logarithmic);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only changes the real-world units in the HUD.\n"
                                                       "Small black holes have deadly tides at the horizon, big ones gentle.");
-        if (ImGui::TreeNode("Cues", "Cues (%d)", (int)g_cues.size())) {
-            static const char* styles = "Title\0Subtitle\0Caption\0Chapter\0HUD\0";
-            int del = -1;
-            for (int i = 0; i < (int)g_cues.size(); i++) {
-                Cue& c = g_cues[i];
-                ImGui::PushID(i);
-                ImGui::SetNextItemWidth(110 * g_dpi);
-                ImGui::DragFloatRange2("##t", &c.t0, &c.t1, 0.05f, 0.0f, 600.0f, "%.1f", "%.1f"); ImGui::SameLine();
-                ImGui::SetNextItemWidth(80 * g_dpi);
-                ImGui::Combo("##s", &c.style, styles); ImGui::SameLine();
-                if (ImGui::SmallButton("x")) del = i;
-                char buf[512]; std::snprintf(buf, sizeof buf, "%s", c.text.c_str());
-                ImGui::SetNextItemWidth(-1);
-                if (ImGui::InputText("##text", buf, sizeof buf)) c.text = buf;
-                ImGui::PopID();
-            }
-            if (del >= 0) g_cues.erase(g_cues.begin() + del);
-            if (ImGui::Button("Add caption at playhead")) g_cues.push_back({g_playhead, g_playhead + 6.0f, CUE_CAPTION, "New caption"});
-            ImGui::TreePop();
+    }
+    ImGui::End();
+}
+
+// timeline: ruler, camera keys, cue lanes, playhead. Click or drag to scrub.
+static void timelineWidget() {
+    float L = std::max(seqLength(), 1.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    float w = std::max(60.0f, ImGui::GetContentRegionAvail().x), h = 78.0f * g_dpi, ruler = 18.0f * g_dpi;
+    ImGui::InvisibleButton("##timeline", ImVec2(w, h));
+    bool hovered = ImGui::IsItemHovered();
+    auto X = [&](float t) { return p0.x + std::max(0.0f, std::min(L, t)) / L * w; };
+
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(14, 14, 16, 255));
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + ruler), IM_COL32(30, 30, 33, 255));
+    if (g_blackAt > 0 && g_blackAt < L)
+        dl->AddRectFilled(ImVec2(X(g_blackAt), p0.y + ruler), ImVec2(p0.x + w, p0.y + h), IM_COL32(0, 0, 0, 160));
+
+    float pps = w / L;
+    float major = pps * 10 >= 70 ? 10.0f : (pps * 30 >= 70 ? 30.0f : 60.0f), minor = major / 5;
+    for (int i = 0; i * minor <= L + 1e-3f; i++) {
+        float t = i * minor, x = X(t);
+        bool isMajor = i % 5 == 0;
+        dl->AddLine(ImVec2(x, p0.y + (isMajor ? 2 : ruler * 0.6f)), ImVec2(x, p0.y + ruler), IM_COL32(110, 110, 115, 255));
+        if (isMajor) {
+            dl->AddLine(ImVec2(x, p0.y + ruler), ImVec2(x, p0.y + h), IM_COL32(40, 40, 44, 255));
+            char b[16]; std::snprintf(b, sizeof b, "%d:%02d", (int)t / 60, (int)t % 60);
+            dl->AddText(ImVec2(x + 3, p0.y + 1), IM_COL32(150, 150, 155, 255), b);
         }
     }
 
-    // ---------------------------------------------------------------- export
-    if (ImGui::CollapsingHeader("Render video", ImGuiTreeNodeFlags_DefaultOpen)) {
+    // cue lanes: titles & chapters, captions, HUD
+    static const ImU32 cueCol[CUE_STYLES] = {IM_COL32(220, 180, 90, 200), IM_COL32(170, 140, 80, 200), IM_COL32(110, 140, 190, 200),
+                                             IM_COL32(230, 130, 50, 200), IM_COL32(90, 170, 110, 170)};
+    static const int cueLane[CUE_STYLES] = {0, 0, 1, 0, 2};
+    float laneTop = p0.y + ruler + 24 * g_dpi, laneH = (p0.y + h - 4 * g_dpi - laneTop) / 3.0f;
+    for (auto& c : g_cues) {
+        float y = laneTop + cueLane[c.style] * laneH;
+        ImVec2 a(X(c.t0), y + 1), b(std::max(X(c.t1), X(c.t0) + 2), y + laneH - 1);
+        dl->AddRectFilled(a, b, cueCol[c.style], 2.0f);
+        if (hovered && ImGui::IsMouseHoveringRect(a, b) && !c.text.empty()) ImGui::SetTooltip("%s", c.text.c_str());
+    }
+
+    // camera keys
+    float ky = p0.y + ruler + 12 * g_dpi, ks = 5.5f * g_dpi;
+    for (auto& k : g_keys) {
+        float x = X(k.t);
+        ImU32 col = k.c.fall > 0.5f ? IM_COL32(120, 170, 255, 255) : IM_COL32(255, 160, 60, 255);
+        dl->AddQuadFilled(ImVec2(x, ky - ks), ImVec2(x + ks, ky), ImVec2(x, ky + ks), ImVec2(x - ks, ky), col);
+    }
+
+    // playhead
+    float px = X(g_playhead);
+    dl->AddLine(ImVec2(px, p0.y), ImVec2(px, p0.y + h), IM_COL32(255, 70, 50, 255), 2.0f);
+    dl->AddTriangleFilled(ImVec2(px - 6 * g_dpi, p0.y), ImVec2(px + 6 * g_dpi, p0.y), ImVec2(px, p0.y + 8 * g_dpi), IM_COL32(255, 70, 50, 255));
+
+    if (ImGui::IsItemActive() && !g_job.active) {
+        g_playhead = std::max(0.0f, std::min(L, (ImGui::GetIO().MousePos.x - p0.x) / w * L));
+        g_camMode = CAM_SEQUENCE;
+    }
+    if (hovered && !ImGui::IsItemActive() && !ImGui::IsAnyItemActive()) {
+        float t = (ImGui::GetIO().MousePos.x - p0.x) / w * L;
+        dl->AddLine(ImVec2(X(t), p0.y + ruler), ImVec2(X(t), p0.y + h), IM_COL32(255, 255, 255, 50));
+    }
+}
+
+static void panelSequencer() {
+    if (!g_winSequencer) return;
+    if (ImGui::Begin("Sequencer", &g_winSequencer)) {
+        timelineWidget();
+        if (ImGui::BeginTabBar("seqtabs")) {
+            if (ImGui::BeginTabItem("Camera keys")) {
+                if (ImGui::Button("Add key at playhead")) addKey(g_playhead, currentCam());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame a shot with the free camera, move the playhead, click.");
+                ImGui::SameLine();
+                ImGui::TextDisabled("orange = hovering, blue = free fall");
+                if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY)) {
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableSetupColumn("time", ImGuiTableColumnFlags_WidthFixed, 80 * g_dpi);
+                    ImGui::TableSetupColumn("view", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 90 * g_dpi);
+                    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 22 * g_dpi);
+                    ImGui::TableHeadersRow();
+                    int del = -1;
+                    bool resort = false;
+                    for (int i = 0; i < (int)g_keys.size(); i++) {
+                        Key& k = g_keys[i];
+                        ImGui::PushID(i);
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::SetNextItemWidth(-1);
+                        ImGui::DragFloat("##t", &k.t, 0.05f, 0.0f, 600.0f, "%.2f");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) resort = true;
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("r %.2f  el %.0f  fov %.0f  yaw %.0f%s", k.c.dist, k.c.el * 180 / PI, 2 * std::atan(k.c.fov) * 180 / PI,
+                                    k.c.yaw * 180 / PI, k.c.fall > 0.5f ? "  falling" : "");
+                        ImGui::TableSetColumnIndex(2);
+                        if (ImGui::SmallButton("Go")) { g_playhead = k.t; g_camMode = CAM_SEQUENCE; g_playing = false; }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Set")) k.c = currentCam();
+                        ImGui::TableSetColumnIndex(3);
+                        if (ImGui::SmallButton("x")) del = i;
+                        ImGui::PopID();
+                    }
+                    if (del >= 0) g_keys.erase(g_keys.begin() + del);
+                    if (resort) sortKeys();
+                    ImGui::EndTable();
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Titles & captions")) {
+                if (ImGui::Button("Add caption at playhead")) g_cues.push_back({g_playhead, g_playhead + 6.0f, CUE_CAPTION, "New caption"});
+                if (ImGui::BeginChild("cues")) {
+                    static const char* styles = "Title\0Subtitle\0Caption\0Chapter\0HUD\0";
+                    int del = -1;
+                    for (int i = 0; i < (int)g_cues.size(); i++) {
+                        Cue& c = g_cues[i];
+                        ImGui::PushID(i);
+                        ImGui::SetNextItemWidth(120 * g_dpi);
+                        ImGui::DragFloatRange2("##t", &c.t0, &c.t1, 0.05f, 0.0f, 600.0f, "%.1f", "%.1f"); ImGui::SameLine();
+                        ImGui::SetNextItemWidth(90 * g_dpi);
+                        ImGui::Combo("##s", &c.style, styles); ImGui::SameLine();
+                        char buf[512]; std::snprintf(buf, sizeof buf, "%s", c.text.c_str());
+                        ImGui::SetNextItemWidth(-30 * g_dpi);
+                        if (ImGui::InputText("##text", buf, sizeof buf)) c.text = buf;
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("x")) del = i;
+                        ImGui::PopID();
+                    }
+                    if (del >= 0) g_cues.erase(g_cues.begin() + del);
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+    ImGui::End();
+}
+
+static void panelRender() {
+    if (!g_winRender) return;
+    if (ImGui::Begin("Render", &g_winRender)) {
+        ImGui::SeparatorText("Real-time preview");
+        int q = g_quality;
+        if (ImGui::Combo("Scalability", &q, "Low\0Medium\0High\0Ultra\0")) applyQuality(q);
+        ImGui::SliderFloat("Render scale", &P.renderScale, 0.25f, 2.0f, "%.2f x");
+        ImGui::Checkbox("Ultra geodesic integration", &P.ultra);
+        ImGui::SeparatorText("Video");
+        ImGui::BeginDisabled(g_job.active);
         ImGui::Combo("Resolution", &g_exRes, "1280 x 720\0" "1920 x 1080\0" "2560 x 1440\0" "3840 x 2160 (4K)\0");
         ImGui::Combo("Frame rate", &g_exFps, "24 fps (film)\0" "30 fps\0" "60 fps\0");
         ImGui::SliderInt("Samples / frame", &g_exSamples, 1, 64);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sub-frames averaged per frame: antialiasing + motion blur.\nRender time scales linearly.");
         ImGui::SliderFloat("Shutter", &g_exShutter, 0.0f, 1.0f, "%.2f (180 deg = 0.5)");
         ImGui::Checkbox("Ultra geodesics", &g_exUltra);
-        ImGui::InputText("Output", g_exPath, sizeof g_exPath);
+        ImGui::SetNextItemWidth(-60 * g_dpi);
+        ImGui::InputText("##out", g_exPath, sizeof g_exPath); ImGui::SameLine();
+        if (ImGui::Button("...")) fileDialog(true, g_exPath, sizeof g_exPath, "MP4 video (*.mp4)\0*.mp4\0", "mp4");
         ImGui::InputText("ffmpeg", g_ffmpeg, sizeof g_ffmpeg);
         int frames = (int)std::ceil(seqLength() * FPS_V[g_exFps]);
-        ImGui::TextDisabled("%d frames, %.1f s of sequence", frames, seqLength());
-        if (ImGui::Button("Render sequence to video", ImVec2(-1, 0))) beginExport(false);
+        ImGui::TextDisabled("%d frames, %s of film", frames, mmss(seqLength()).c_str());
+        if (ImGui::Button("Render film to video", ImVec2(-1, 0))) beginExport(false);
         if (ImGui::Button("Screenshot of current view", ImVec2(-1, 0))) beginExport(true);
+        ImGui::EndDisabled();
+        if (!g_status.empty()) { ImGui::Separator(); ImGui::TextWrapped("%s", g_status.c_str()); }
     }
-
-    if (!g_status.empty()) { ImGui::Separator(); ImGui::TextWrapped("%s", g_status.c_str()); }
     ImGui::End();
+}
+
+static void panelViewport() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool open = ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    g_viewW = g_viewH = 0;
+    if (open) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        g_viewMin = ImGui::GetCursorScreenPos();
+        g_viewMax = ImVec2(g_viewMin.x + avail.x, g_viewMin.y + avail.y);
+        g_viewW = (int)avail.x; g_viewH = (int)avail.y;
+        g_viewDL = ImGui::GetWindowDrawList();
+        if (avail.x > 4 && avail.y > 4) {
+            ImGui::InvisibleButton("##view", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            ImGuiIO& io = ImGui::GetIO();
+            g_dragging = false;
+            if (!g_job.active) {
+                if (ImGui::IsItemActivated()) grabCamera();
+                if (ImGui::IsItemActive()) {
+                    g_dragging = true;
+                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        g_orbit.phi += io.MouseDelta.x * 0.005f;
+                        g_orbit.el   = std::max(-1.53f, std::min(1.53f, g_orbit.el + io.MouseDelta.y * 0.004f));
+                    } else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                        g_orbit.yaw  += io.MouseDelta.x * 0.003f;
+                        g_orbit.pitch = std::max(-1.5f, std::min(1.5f, g_orbit.pitch - io.MouseDelta.y * 0.003f));
+                    }
+                }
+                if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
+                    grabCamera();
+                    g_orbit.dist = std::max(MIN_DIST, std::min(300.0f, g_orbit.dist * std::pow(0.9f, io.MouseWheel)));
+                }
+            }
+        }
+    }
+    ImGui::End();
+}
+
+// info badges drawn over the viewport image (after it has been added)
+static void viewportBadges(int sw, int sh) {
+    if (!g_viewDL) return;
+    char a[96], b[96];
+    if (g_job.active) std::snprintf(a, sizeof a, g_job.screenshot ? "RENDERING SCREENSHOT" : "RENDERING VIDEO");
+    else if (g_camMode == CAM_SEQUENCE) std::snprintf(a, sizeof a, "FILM   %s", mmss(g_playhead).c_str());
+    else std::snprintf(a, sizeof a, "FREE CAMERA");
+    if (g_job.active) std::snprintf(b, sizeof b, "%d x %d", g_job.W, g_job.H);
+    else std::snprintf(b, sizeof b, "%d x %d  %s  |  %s", sw, sh, QUALITY_NAMES[g_quality],
+                       P.spin > 0 ? "Kerr" : "Schwarzschild");
+    ImVec2 p(g_viewMin.x + 10 * g_dpi, g_viewMin.y + 8 * g_dpi);
+    float lh = ImGui::GetTextLineHeight();
+    float wdt = std::max(ImGui::CalcTextSize(a).x, ImGui::CalcTextSize(b).x) + 16 * g_dpi;
+    g_viewDL->AddRectFilled(ImVec2(p.x - 6 * g_dpi, p.y - 4 * g_dpi), ImVec2(p.x - 6 * g_dpi + wdt, p.y + lh * 2 + 6 * g_dpi),
+                            IM_COL32(0, 0, 0, 130), 3.0f);
+    g_viewDL->AddText(p, IM_COL32(255, 175, 90, 255), a);
+    g_viewDL->AddText(ImVec2(p.x, p.y + lh + 2 * g_dpi), IM_COL32(170, 170, 175, 255), b);
+}
+
+static void helpWindow() {
+    if (g_showHelp) { ImGui::OpenPopup("Controls"); g_showHelp = false; }
+    ImGui::SetNextWindowSize(ImVec2(440 * g_dpi, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Controls", nullptr, ImGuiWindowFlags_NoResize)) {
+        static const char* rows[][2] = {
+            {"Left-drag viewport", "orbit the black hole"}, {"Right-drag viewport", "look around"},
+            {"Mouse wheel", "move closer / farther"},       {"Space", "play / pause"},
+            {"Tab", "cinema mode on / off"},                {"Esc", "leave cinema mode"},
+            {"F11 / Alt+Enter", "fullscreen"},               {"F12", "screenshot"},
+            {"Ctrl+O / Ctrl+S", "open / save sequence"},
+        };
+        if (ImGui::BeginTable("ctl", 2, ImGuiTableFlags_RowBg)) {
+            for (auto& r : rows) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextColored(ACCENT, "%s", r[0]);
+                ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(r[1]);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("Drag panel tabs to rearrange. View > Reset layout restores them.");
+        if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+static void drawUI(float fps) {
+    g_viewDL = nullptr;
+    if (!g_showUI) {
+        double age = nowSeconds() - g_cinemaSince;
+        if (age < 4.0) {
+            const char* hint = "Press Tab or Esc to return to the editor";
+            ImVec2 sz = ImGui::CalcTextSize(hint);
+            ImU32 col = IM_COL32(220, 220, 220, (int)(200 * std::min(1.0, 4.0 - age)));
+            ImGui::GetForegroundDrawList()->AddText(ImVec2((g_w - sz.x) * 0.5f, g_h * 0.08f), col, hint);
+        }
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantTextInput && !g_job.active) {
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) menuOpenSequence();
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) menuSaveSequence(false);
+    }
+    drawMenuBar();
+    drawToolbar(fps);
+    drawDockspace();
+    ImGui::BeginDisabled(g_job.active);
+    panelCamera();
+    panelBlackHole();
+    panelSky();
+    panelFilm();
+    panelSequencer();
+    ImGui::EndDisabled();
+    panelRender();
+    panelViewport();
+    helpWindow();
 }
 
 // ============================================================================= window
@@ -1828,16 +2269,17 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         if (uiKeys) break;
         switch (wp) {
-        case VK_ESCAPE: if (!g_job.active) g_running = false; break;
+        case VK_ESCAPE: if (!g_showUI) g_showUI = true; break;
         case VK_F11:    toggleFullscreen(); break;
-        case VK_TAB:    g_showUI = !g_showUI; break;
+        case VK_F12:    if (!g_job.active) beginExport(true); break;
+        case VK_TAB:    if (g_showUI) enterCinema(); else g_showUI = true; break;
         case VK_SPACE:
             if (g_camMode == CAM_SEQUENCE) g_playing = !g_playing; else g_paused = !g_paused;
             break;
         }
         return 0;
     case WM_LBUTTONDOWN:
-        if (uiMouse || g_job.active) break;
+        if (uiMouse || g_job.active || g_showUI) break;
         grabCamera();
         g_dragging = true; g_lastMX = GET_X_LPARAM(lp); g_lastMY = GET_Y_LPARAM(lp);
         SetCapture(h); return 0;
@@ -1854,7 +2296,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         }
         break;
     case WM_MOUSEWHEEL:
-        if (uiMouse || g_job.active) break;
+        if (uiMouse || g_job.active || g_showUI) break;
         grabCamera();
         g_orbit.dist = std::max(MIN_DIST, std::min(300.0f, g_orbit.dist * std::pow(0.9f, GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA)));
         return 0;
@@ -1917,14 +2359,19 @@ int main() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = "gargantua_ui.ini";
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    {
+        char font[MAX_PATH]; GetWindowsDirectoryA(font, MAX_PATH);
+        std::strncat(font, "\\Fonts\\segoeui.ttf", MAX_PATH - std::strlen(font) - 1);
+        if (GetFileAttributesA(font) != INVALID_FILE_ATTRIBUTES) ImGui::GetIO().Fonts->AddFontFromFileTTF(font, 16.0f);
+    }
     g_dpi = ImGui_ImplWin32_GetDpiScaleForHwnd(g_hwnd);
     applyStyle();
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    Target scene;
+    Target scene, view8;                 // HDR scene at render scale, graded LDR image for the viewport panel
     std::vector<Target> mips;
-    int builtW = 0, builtH = 0; float builtScale = 0;
 
     LARGE_INTEGER freq, prev, now;
     QueryPerformanceFrequency(&freq);
@@ -1968,10 +2415,11 @@ int main() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
-        drawUI(fps, g_job.active ? g_job.W : scene.w, g_job.active ? g_job.H : scene.h);
+        drawUI(fps);
 
+        int outW = g_showUI ? g_viewW : g_w, outH = g_showUI ? g_viewH : g_h;
         if (g_job.active) {
-            // ---- offline render, then show the latest finished frame letterboxed
+            // ---- offline render; show the latest finished frame fitted into the view
             exportStep();
             p_glBindFramebuffer(K_FRAMEBUFFER, 0);
             glViewport(0, 0, g_w, g_h);
@@ -1979,29 +2427,48 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT);
             if (g_job.active && g_job.haveFrame) {
                 float a = (float)g_job.W / g_job.H;
-                float vw = (float)g_w, vh = vw / a;
-                if (vh > g_h) { vh = (float)g_h; vw = vh * a; }
-                float vx = (g_w - vw) * 0.5f, vy = (g_h - vh) * 0.5f;
-                glViewport((int)vx, (int)vy, (int)vw, (int)vh);
-                copyTex(g_job.out8.tex, vx, vy, vw, vh, 1.0f);
-                glViewport(0, 0, g_w, g_h);
+                if (g_showUI && g_viewDL) {
+                    float vw = g_viewMax.x - g_viewMin.x, vh = vw / a;
+                    if (vh > g_viewMax.y - g_viewMin.y) { vh = g_viewMax.y - g_viewMin.y; vw = vh * a; }
+                    float vx = (g_viewMin.x + g_viewMax.x - vw) * 0.5f, vy = (g_viewMin.y + g_viewMax.y - vh) * 0.5f;
+                    g_viewDL->AddRectFilled(g_viewMin, g_viewMax, IM_COL32(0, 0, 0, 255));
+                    g_viewDL->AddImage((ImTextureID)(intptr_t)g_job.out8.tex, ImVec2(vx, vy), ImVec2(vx + vw, vy + vh), ImVec2(0, 1), ImVec2(1, 0));
+                } else if (!g_showUI) {
+                    float vw = (float)g_w, vh = vw / a;
+                    if (vh > g_h) { vh = (float)g_h; vw = vh * a; }
+                    float vx = (g_w - vw) * 0.5f, vy = (g_h - vh) * 0.5f;
+                    glViewport((int)vx, (int)vy, (int)vw, (int)vh);
+                    copyTex(g_job.out8.tex, vx, vy, vw, vh, 1.0f);
+                    glViewport(0, 0, g_w, g_h);
+                }
             }
-        } else {
+            if (g_showUI) viewportBadges(0, 0);
+        } else if (outW >= 8 && outH >= 8) {
             // ---- real-time render
-            if (g_w != builtW || g_h != builtH || P.renderScale != builtScale) {
-                freeTarget(scene);
-                scene = makeTarget(std::max(1, (int)(g_w * P.renderScale)), std::max(1, (int)(g_h * P.renderScale)));
-                buildMips(mips, scene.w, scene.h);
-                builtW = g_w; builtH = g_h; builtScale = P.renderScale;
-            }
+            int sw = std::max(1, (int)(outW * P.renderScale)), sh = std::max(1, (int)(outH * P.renderScale));
+            if (scene.w != sw || scene.h != sh) { freeTarget(scene); scene = makeTarget(sw, sh); buildMips(mips, sw, sh); }
+            if (g_showUI && (view8.w != outW || view8.h != outH)) { freeTarget(view8); view8 = makeTarget(outW, outH, false); }
             p_glBindFramebuffer(K_FRAMEBUFFER, scene.fbo);
             glViewport(0, 0, scene.w, scene.h);
             setSceneUniforms(scene.w, scene.h, camBasis(currentCam()), currentTime(), 0, 0, P.ultra ? 0.012f : 0.03f);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             runBloom(scene, mips);
-            overlayUpdate(g_ovView, g_w, g_h, g_playhead, g_camMode == CAM_SEQUENCE);
-            composite(0, g_w, g_h, scene, mips, currentTime(), currentFade(), g_ovView,
+            overlayUpdate(g_ovView, outW, outH, g_playhead, g_camMode == CAM_SEQUENCE);
+            composite(g_showUI ? view8.fbo : 0, outW, outH, scene, mips, currentTime(), currentFade(), g_ovView,
                       P.exposure * autoExposure(currentCam()));
+            p_glBindFramebuffer(K_FRAMEBUFFER, 0);
+            glViewport(0, 0, g_w, g_h);
+            if (g_showUI) {
+                glClearColor(0, 0, 0, 1);
+                glClear(GL_COLOR_BUFFER_BIT);
+                if (g_viewDL) g_viewDL->AddImage((ImTextureID)(intptr_t)view8.tex, g_viewMin, g_viewMax, ImVec2(0, 1), ImVec2(1, 0));
+                viewportBadges(scene.w, scene.h);
+            }
+        } else {
+            p_glBindFramebuffer(K_FRAMEBUFFER, 0);
+            glViewport(0, 0, g_w, g_h);
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
         }
 
         ImGui::Render();

@@ -28,20 +28,27 @@ The camera is a free-falling observer. Inside the horizon, a hovering ("static")
 
 The HUD shows the real numbers for a 100 million solar-mass black hole: distance, speed relative to a hovering observer, clock rate compared to far away, and head-to-toe tides. Without spin it also shows the proper time left before the singularity; with spin it shows the spin and both horizons, and it says when you are in the ergosphere, where nothing can stay still.
 
-**What the UI controls**
+**The editor**
 
-- **Camera:** Free orbit or sequence playback. Free orbit has look yaw/pitch (to look away from the hole) and a **free fall** slider (0 = hovering on rockets, 1 = falling from far away). If you drag the viewport during playback, it switches to free orbit and keeps the exact current view.
-- **Physics:** A **gravity slider** (at 0, light travels straight; at 2, lensing is exaggerated), plus Doppler and redshift strength, disk radii, temperature, brightness, opacity, and swirl speed.
-  - **Spin (a/M)** from 0 to 0.998, and **Disk starts at the ISCO**, which keeps the inner edge where physics puts it.
-  - **Observer shift** controls the camera's own blue/redshift.
-  - **Auto exposure** stops the lens down when everything ahead is blueshifted.
-  - Presets: "Physically based" and "Interstellar look" (the film turned the Doppler effect off).
-- **Sky / Post:** Separate strength sliders for each sky layer. Exposure, bloom, vignette, chromatic aberration, and grain.
-- **Sequencer:** To make your own shot, frame it in free orbit, move the playhead, and click "Add key". Keys can be retimed, jumped to, overwritten, or deleted. The camera moves along smooth spline curves between keys. "Black at" sets when the picture cuts to black. The sequence, with its cues, saves to and loads from `sequence.txt`.
-- **Film:** Letterbox on/off and its aspect ratio. Titles/captions/HUD on/off. The black hole mass used for the HUD's real-world units. A cue editor for every title, chapter card, caption and HUD timing.
-- **Render video:** 720p up to 4K, at 24, 30, or 60 fps. "Samples / frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
-  - Rendering is split into tiles, so heavy 4K frames won't crash your GPU driver, and the UI stays responsive with a progress bar and an estimated time remaining.
-  - There's also a one-click **Screenshot** of the current view at export resolution.
+The app opens as an Unreal-style editor:
+- **Menu bar:** File (open/save sequence, screenshot, render video), View (show/hide panels, reset layout, cinema mode, fullscreen), Help (controls).
+- **Toolbar:** Film / Free camera switch, transport (start, play/pause, stop, end, loop), time, playback speed, the **Scalability** dropdown, and Screenshot / Render / Cinema buttons. While a video renders, the progress bar and Cancel button sit here.
+- **Viewport:** the live image. Left-drag orbits, right-drag looks around, the wheel moves closer or farther. Grabbing the view during the film switches to the free camera at the exact current shot.
+- **Panels:** Camera, Black hole, Sky & lens, Film, Sequencer, Render. Drag their tabs to dock them anywhere; View > Reset layout restores the default.
+- **Cinema mode (Tab):** the image fills the window with no UI. Tab or Esc brings the editor back.
+
+The preview always starts on **Low** quality, so it runs on any GPU. Raise it with Scalability (Low, Medium, High, Ultra). Video renders and screenshots always use full quality, whatever the preview is set to.
+
+**What the panels control**
+
+- **Camera:** Free camera position, lens, look yaw/pitch (to look away from the hole) and a **free fall** slider (0 = hovering on rockets, 1 = falling from far away).
+- **Black hole:** A **gravity slider** (at 0, light travels straight; at 2, lensing is exaggerated), **spin (a/M)** from 0 to 0.998, Doppler, redshift and observer shift, plus the disk: inner edge at the ISCO, radii, temperature, brightness, opacity, swirl speed. Presets: "Physically based" and "Interstellar look" (the film turned the Doppler effect off).
+- **Sky & lens:** Separate strength sliders for each sky layer. Exposure, auto exposure, bloom, vignette, chromatic aberration, and grain.
+- **Film:** Letterbox on/off and its aspect ratio, titles/captions/HUD on/off, fades and the cut to black, and the black hole mass used for the HUD's real-world units.
+- **Sequencer:** A timeline with the camera keys (orange = hovering, blue = free fall), lanes for titles, captions and the HUD, and the playhead; click or drag to scrub. Under it, the key list (add a key at the playhead from the current view, retime, jump, overwrite, delete) and the caption editor. The camera moves along smooth spline curves between keys. File > Save writes the sequence with its captions to a text file.
+- **Render:** Preview quality, then video: 720p up to 4K, at 24, 30, or 60 fps. "Samples / frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
+  - Rendering is split into tiles, so heavy 4K frames won't crash your GPU driver, and the UI stays responsive.
+  - There's also a one-click **Screenshot** (F12) of the current view at export resolution.
 
 **Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That's 11,160 frames × 16 samples, so try a 720p render with 4 samples first to check the timing.
 

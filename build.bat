@@ -8,5 +8,5 @@ where cl >nul 2>nul
 if %errorlevel%==0 (
     cl /nologo /utf-8 /O2 /EHsc /std:c++17 /I%IMGUI% /I%IMGUI%\backends %SRC% /Fe:gargantua_studio.exe
 ) else (
-    g++ -O2 -std=c++17 -I%IMGUI% -I%IMGUI%\backends %SRC% -o gargantua_gl.exe -static -lopengl32 -lgdi32 -luser32 -ldwmapi -mwindows
+    g++ -O2 -std=c++17 -I%IMGUI% -I%IMGUI%\backends %SRC% -o gargantua_gl.exe -static -lopengl32 -lgdi32 -luser32 -ldwmapi -lcomdlg32 -mwindows
 )
