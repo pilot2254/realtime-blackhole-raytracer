@@ -18,7 +18,7 @@ SceneObject makeObject(int type) {
                      std::snprintf(o.name, sizeof o.name, "Hot Spot"); break;
     case SO_PLANET:  o.orbitR = 2.4f; o.size = 0.14f; o.speed = 0.02f; o.incline = -0.2f; o.color = {0.20f, 0.33f, 0.40f};
                      std::snprintf(o.name, sizeof o.name, "Planet"); break;
-    case SO_SHIP:    o.orbitR = 8.0f; o.size = 0.12f; o.speed = 0.03f; o.color = {0.80f, 0.80f, 0.78f}; o.spin = 0.4f;
+    case SO_SHIP:    o.orbitR = 8.0f; o.size = 0.14f; o.speed = 0.03f; o.color = {0.80f, 0.80f, 0.78f}; o.spin = 0.4f;
                      std::snprintf(o.name, sizeof o.name, "Ship"); break;
     case SO_JET:     o.size = 0.7f; o.orbitR = 40.0f; o.temp = 9000.0f; o.bright = 2.5f; o.spin = 0.9f;
                      std::snprintf(o.name, sizeof o.name, "Relativistic Jet"); break;
@@ -38,23 +38,36 @@ static V3 orbitPoint(float R, float phi, float incl) {
     return {p.x, -p.z * std::sin(incl), p.z * std::cos(incl)};
 }
 
-V3 objectPosition(const SceneObject& o, float t, const CamFrame& cam, V3* velocity, V3* axis) {
+CamState (*g_filmCameraAt)(float t) = nullptr;
+
+static V3 pathPos(float t) { return camBasis(g_filmCameraAt(t)).pos; }
+
+V3 objectPosition(const SceneObject& o, float t, bool film, V3* velocity, V3* axis) {
     if (o.type == SO_JET) {
         if (velocity) *velocity = {0, 0, 0};
         if (axis) *axis = {0, 1, 0};
         return {0, 0, 0};
     }
-    if (o.type == SO_SHIP && o.follow) {
-        // overtakes the camera from behind when it appears, pulls away ahead before it disappears
-        float ahead = o.offset.x;
-        if (o.t1 > o.t0) {
+    if (o.type == SO_SHIP && o.follow && g_filmCameraAt) {
+        // the ship flies the film camera's own path through space, 'lead' seconds ahead of it. Entering its
+        // film window it comes from behind and overtakes; near the end it speeds off ahead. In the free
+        // camera it waits at the middle of its stretch of path.
+        bool window = o.t1 > o.t0;
+        float tt = film || !window ? t : 0.5f * (o.t0 + o.t1);
+        float lead = o.offset.x;
+        if (film && window) {
             float in  = smoothstepf(o.t0, o.t0 + 7.0f, t);
-            float out = smoothstepf(o.t1 - 6.0f, o.t1, t);
-            ahead = -0.8f + (o.offset.x + 0.8f) * in + 9.0f * out * out;
+            float out = smoothstepf(o.t1 - 7.0f, o.t1, t);
+            lead = -2.5f + (o.offset.x + 2.5f) * in + 6.0f * out * out;
         }
+        float tp = tt + lead;
+        V3 P = pathPos(tp);
+        V3 T = norm(pathPos(tp + 0.1f) - pathPos(tp - 0.1f));
+        V3 U = norm(V3{0, 1, 0} - T * T.y);
+        V3 R = cross(T, U);                                  // toward the hole while the path orbits it
         if (velocity) *velocity = {0, 0, 0};
-        if (axis) *axis = cam.fwd;
-        return cam.pos + cam.fwd * ahead + cam.right * o.offset.y + cam.up * o.offset.z;
+        if (axis) *axis = T;
+        return P + R * o.offset.y + U * o.offset.z;
     }
     float phi = o.phase + o.speed * t;
     V3 p = orbitPoint(o.orbitR, phi, o.incline);
@@ -84,12 +97,12 @@ uint64_t objectsHash() {
     return h;
 }
 
-int gatherObjects(float t, const CamFrame& cam, bool film, ObjectGPU out[MAX_OBJECTS]) {
+int gatherObjects(float t, bool film, ObjectGPU out[MAX_OBJECTS]) {
     int n = 0;
     for (const SceneObject& o : g_objects) {
         if (n >= MAX_OBJECTS || !objectActive(o, t, film)) continue;
         V3 vel, axis;
-        V3 p = objectPosition(o, t, cam, &vel, &axis);
+        V3 p = objectPosition(o, t, film, &vel, &axis);
         ObjectGPU& g = out[n++];
         g = ObjectGPU{};
         g.a[0] = p.x; g.a[1] = p.y; g.a[2] = p.z; g.a[3] = o.size;

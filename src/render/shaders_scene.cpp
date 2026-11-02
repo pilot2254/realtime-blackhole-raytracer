@@ -197,10 +197,15 @@ float schwShift(vec3 hit, float r, vec3 rayDir) {
     return D * g;
 }
 
+// photon-ring light (rays that wound far round the hole) is thinner than a pixel: it gets the disk's average
+// brightness instead of its streaks, and is softened, so it reads as a thin line instead of sparkles
+float gRing = 0.0;
+float ringFade(float wind) { return clamp((wind - 4.4) * 0.8, 0.0, 1.0); }      // past ~1.4 half-turns
+
 // s = frequency seen by the camera / emitted
 void shadeDisk(vec3 hit, float r, float s, inout vec3 col, inout float T) {
     float ang  = atan(hit.z, hit.x);
-    float tex  = diskTex(r, ang, uTime);
+    float tex  = mix(diskTex(r, ang, uTime), 0.75, gRing) * (1.0 - 0.45 * gRing);
     float x    = uDiskIn / r;
     float edge = smoothstep(uDiskIn, uDiskIn + 0.45, r) *
                  smoothstep(uDiskOut, uDiskOut - 0.45 * (uDiskOut - uDiskIn), r);
@@ -238,16 +243,19 @@ float segSphere(vec3 a, vec3 d, vec3 c, float R) {
 
 // the Endurance: twelve modules on a ring around a hub, four spokes. Units of its radius, axis = z.
 float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float sdCylZ(vec3 p, float r, float h) { vec2 d = abs(vec2(length(p.xy), p.z)) - vec2(r, h); return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)); }
+float sdCylX(vec3 p, float r, float h) { vec2 d = abs(vec2(length(p.yz), p.x)) - vec2(r, h); return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)); }
+// the Endurance: twelve rounded modules on a torus ring, a cylindrical hub, four spokes. Units of its radius.
 float shipSDF(vec3 p) {
     float ang = atan(p.y, p.x);
     float a = (floor(ang / (PI / 6.0)) + 0.5) * (PI / 6.0);
     vec3 q = vec3(cos(a) * p.x + sin(a) * p.y, -sin(a) * p.x + cos(a) * p.y, p.z);
-    float module = sdBox(q - vec3(1.0, 0.0, 0.0), vec3(0.11, 0.17, 0.09)) - 0.01;
-    float ring = length(vec2(length(p.xy) - 1.0, p.z)) - 0.03;
-    float hub = sdBox(p, vec3(0.12, 0.12, 0.24)) - 0.02;
+    float module = sdBox(q - vec3(1.0, 0.0, 0.0), vec3(0.085, 0.15, 0.085)) - 0.035;
+    float ring = length(vec2(length(p.xy) - 1.0, p.z)) - 0.028;
+    float hub = min(sdCylZ(p, 0.13, 0.20) - 0.015, sdCylZ(p - vec3(0.0, 0.0, 0.25), 0.07, 0.07));
     float b4 = floor(ang / (PI * 0.5) + 0.5) * (PI * 0.5);
-    vec3 s = vec3(cos(b4) * p.x + sin(b4) * p.y, -sin(b4) * p.x + cos(b4) * p.y, p.z);
-    float spoke = sdBox(s - vec3(0.55, 0.0, 0.0), vec3(0.45, 0.018, 0.018));
+    vec3 sp = vec3(cos(b4) * p.x + sin(b4) * p.y, -sin(b4) * p.x + cos(b4) * p.y, p.z);
+    float spoke = sdCylX(sp - vec3(0.56, 0.0, 0.0), 0.018, 0.43);
     return min(min(module, ring), min(hub, spoke));
 }
 void shipFrame(int i, out vec3 X, out vec3 Y, out vec3 Z) {
@@ -278,36 +286,75 @@ bool shipHit(int i, vec3 a, vec3 d, out float s) {
 }
 
 // lit by the hot inner disk around the hole
+// lit by the hot inner disk round the hole (key), the disk glowing underneath or above (fill), and the sky
 vec3 surfaceLight(vec3 p, vec3 n, vec3 V, vec3 albedo, float gloss, float specAmt) {
-    vec3 L = normalize(-p + vec3(0.0, -0.15 * length(p), 0.0));
+    vec3 L = normalize(-p + vec3(0.0, -0.25 * p.y, 0.0));
+    vec3 Lf = vec3(0.0, p.y > 0.0 ? -1.0 : 1.0, 0.0);
     vec3 H = normalize(L + V);
-    float diff = max(dot(n, L), 0.0) * 0.85 + 0.04;
-    float spec = pow(max(dot(n, H), 0.0), gloss) * specAmt;
-    float rim  = pow(1.0 - max(dot(n, V), 0.0), 3.0) * max(dot(n, L) + 0.4, 0.0) * 0.2;
-    return (albedo * diff + vec3(1.0, 0.86, 0.7) * spec + vec3(0.55, 0.65, 0.8) * rim) * 1.8;
+    float key  = max(dot(n, L), 0.0);
+    float fill = max(dot(n, Lf), 0.0) * 0.22;
+    float sky  = 0.10 + 0.06 * max(dot(n, -L), 0.0);
+    float spec = pow(max(dot(n, H), 0.0), gloss) * specAmt * key;
+    float rim  = pow(1.0 - max(dot(n, V), 0.0), 3.0) * (0.25 + 0.75 * key) * 0.25;
+    vec3 warm = vec3(1.0, 0.85, 0.68);
+    return (albedo * (warm * (key * 1.7 + fill) + vec3(0.6, 0.7, 0.9) * sky) + warm * spec * 1.6 + vec3(0.55, 0.65, 0.8) * rim);
 }
 
+// Miller's planet: a shallow ocean with long, mountain-sized swells, streaky cloud bands and a thin
+// atmosphere, lit by the disk
 vec3 shadePlanet(int i, vec3 hp, vec3 V) {
     vec3 c = uObjA[i].xyz;
     vec3 n = normalize(hp - c);
-    vec3 q = n * 7.0 + vec3(0.0, uTime * 0.04, 0.0);                    // swell that drifts with time
-    vec3 nw = normalize(n + 0.22 * (vec3(fbm(q + 3.1, 3), fbm(q + 7.3, 3), fbm(q + 1.7, 3)) - 0.5));
-    float foam = smoothstep(0.62, 0.8, fbm(q * 2.3, 4));
-    vec3 albedo = mix(uObjC[i].rgb, vec3(0.75, 0.8, 0.82), foam * 0.5);
-    return surfaceLight(hp, nw, V, albedo, 80.0, 1.6);
+    float rot = uTime * 0.03;
+    vec3 m = vec3(cos(rot) * n.x - sin(rot) * n.z, n.y, sin(rot) * n.x + cos(rot) * n.z);
+    vec3 L  = normalize(-c + vec3(0.0, -0.25 * c.y, 0.0));
+    vec3 Lf = vec3(0.0, c.y > 0.0 ? -1.0 : 1.0, 0.0);
+    float NdL = dot(n, L);
+
+    float swell = fbm(m * vec3(2.0, 7.0, 2.0) + 2.0, 4);                      // long bands of waves
+    vec3 nw = normalize(n + 0.10 * (vec3(fbm(m * 5.0 + 3.1, 3), fbm(m * 5.0 + 7.3, 3), fbm(m * 5.0 + 1.7, 3)) - 0.5)
+                          + 0.06 * (swell - 0.5) * vec3(0.0, 1.0, 0.0));
+    vec3 ocean = uObjC[i].rgb * (0.55 + 0.7 * swell);
+    float clouds = smoothstep(0.50, 0.78, fbm(m * vec3(2.2, 6.5, 2.2) + vec3(11.0, uTime * 0.01, 4.0), 5)) * 0.85;
+
+    vec3 warm = vec3(1.0, 0.85, 0.68);
+    float lit  = max((NdL + 0.18) / 1.18, 0.0);                               // soft terminator
+    vec3 H = normalize(L + V);
+    float glint = pow(max(dot(nw, H), 0.0), 160.0) * 4.0 * (1.0 - clouds) * smoothstep(0.0, 0.2, NdL);
+    float fres  = pow(1.0 - max(dot(nw, V), 0.0), 5.0);
+    float fill  = max(dot(n, Lf), 0.0) * 0.18;
+
+    vec3 col = ocean * warm * (lit * 1.5 + fill) + warm * glint + vec3(0.30, 0.38, 0.45) * fres * lit * 0.6;
+    col = mix(col, vec3(0.93, 0.94, 0.96) * warm * (lit * 1.7 + fill + 0.02), clouds);
+    float rim = pow(1.0 - max(dot(n, V), 0.0), 2.5);
+    col += vec3(0.42, 0.60, 0.95) * rim * smoothstep(-0.25, 0.5, NdL) * 0.8;
+    return col;
 }
 
 vec3 shadeShip(int i, vec3 hp, vec3 V) {
     vec3 X, Y, Z; shipFrame(i, X, Y, Z);
-    const float e = 0.002;
+    const float e = 0.0015;
     float R = uObjA[i].w;
     vec3 n = normalize(vec3(
         shipLocalSDF(i, hp + vec3(e, 0, 0) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(e, 0, 0) * R, X, Y, Z),
         shipLocalSDF(i, hp + vec3(0, e, 0) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(0, e, 0) * R, X, Y, Z),
         shipLocalSDF(i, hp + vec3(0, 0, e) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(0, 0, e) * R, X, Y, Z)));
     vec3 m = (hp - uObjA[i].xyz) / R;
-    float panel = 0.85 + 0.15 * step(0.5, fract(dot(m, X) * 9.0)) * step(0.5, fract(dot(m, Z) * 9.0));
-    return surfaceLight(hp, n, V, uObjC[i].rgb * panel, 40.0, 0.9);
+    vec3 lp = vec3(dot(m, X), dot(m, Y), dot(m, Z));
+    float rr = length(lp.xy);
+    bool onModule = rr > 0.86 && rr < 1.14 && abs(lp.z) < 0.13;
+    bool onHub = rr < 0.16;
+    vec3 albedo = uObjC[i].rgb * (onHub ? 0.55 : 1.0);
+    // panel seams and a dark band round each module
+    float seam = onModule ? smoothstep(0.02, 0.0, abs(fract(atan(lp.y, lp.x) / (PI / 6.0)) - 0.5) - 0.40) : 0.0;
+    albedo *= 1.0 - 0.35 * seam - 0.25 * step(0.05, abs(lp.z)) * float(onModule) * step(abs(lp.z), 0.07);
+    vec3 col = surfaceLight(hp, n, V, albedo, 50.0, 0.8);
+    // small lit windows on the outer faces of the modules
+    if (onModule && rr > 1.06) {
+        float w = step(0.75, fract(atan(lp.y, lp.x) * 60.0 / PI)) * step(abs(lp.z), 0.035);
+        col += vec3(1.0, 0.8, 0.5) * w * 0.9;
+    }
+    return col;
 }
 
 // adds glowing objects along the segment; returns true when an opaque object was hit (T becomes 0)
@@ -350,6 +397,17 @@ bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
         } else if (type == 1) {
             float s = segSphere(a, d, c, R);
             if (s >= 0.0 && s < best) { best = s; hit = i; }
+            // atmosphere: a thin glowing shell, brightest on the lit limb
+            vec3 m = a - c;
+            float sc = clamp(-dot(m, d) / L2, 0.0, 1.0);
+            vec3 pc = m + d * sc;
+            float dist = length(pc);
+            if (dist > R && dist < R * 1.12) {
+                float h = (dist - R) / (0.035 * R);
+                float lit = smoothstep(-0.3, 0.6, dot(pc / dist, normalize(-c)));
+                float chord = min(sqrt(L2), 2.0 * sqrt(max(2.0 * R * (dist - R), 1e-6)) + 0.05 * R);
+                col += T * vec3(0.40, 0.58, 1.0) * exp(-h) * lit * chord / R * 0.9;
+            }
         } else if (type == 2) {
             float s;
             if (shipHit(i, a, d, s) && s < best) { best = s; hit = i; }
@@ -368,6 +426,10 @@ void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dir
     vec3 L = cross(p, v);
     float k = 1.5 * dot(L, L) * uGravity;
     col = vec3(0.0); T = 1.0; escaped = 0.0; dirOut = rd;
+    float wind = 0.0;       // angle the ray has swept round the hole
+    float glowUsed = 0.0;   // photon glow budget: rays skimming the photon orbit would otherwise pile it up
+    int images = 0;     // disk crossings so far: only the direct image and the first photon ring are drawn,
+                        // the higher-order rings are far thinner than a pixel and would only sparkle
 
     for (int i = 0; i < 1200; i++) {
         float r2 = dot(p, p);
@@ -384,14 +446,18 @@ void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dir
         r2 = dot(p, p); r = sqrt(r2);
         v += (-k * p / (r2 * r2 * r)) * (0.5 * dt);
 
-        col += T * vec3(1.0, 0.55, 0.25) * (uGlow * dt * length(v) / max(r2 * r2, 1.0));
+        wind += length(cross(pp, p)) / max(length(pp) * r, 1e-6);          // true angle swept round the hole
+        float gw = dt * length(v) / max(r2 * r2, 1.0);
+        col += T * vec3(1.0, 0.55, 0.25) * (uGlow * gw * clamp(1.0 - glowUsed / 1.2, 0.0, 1.0));
+        glowUsed += gw;
         if (uObjCount > 0 && objectsAlong(pp, p, qObs, col, T)) { dirOut = normalize(v); return; }
 
         if (uDiskOn > 0.5 && (pp.y > 0.0) != (p.y > 0.0)) {
             float f  = pp.y / (pp.y - p.y);
             vec3 hit = mix(pp, p, f);
             float hr = length(hit);
-            if (hr > uDiskIn && hr < uDiskOut) {
+            if (hr > uDiskIn && hr < uDiskOut && ++images <= 2) {
+                gRing = ringFade(wind);
                 shadeDisk(hit, hr, schwShift(hit, hr, normalize(v)) * qObs, col, T);
                 if (T < 0.01) { dirOut = normalize(v); return; }
             }
@@ -458,7 +524,8 @@ void traceKerr(vec3 x, vec3 p, float qObs, out vec3 col, out float T, out vec3 d
     float rH = KM + sqrt(max(KM * KM - KA * KA, 0.0));                     // outer horizon
     float Lz = x.x * p.y - x.y * p.x;                                       // conserved
     col = vec3(0.0); T = 1.0; escaped = 0.0; dirOut = fromStd(normalize(p));
-    int stuck = 0;
+    int stuck = 0, images = 0;
+    float glowUsed = 0.0, wind = 0.0;
 
     for (int i = 0; i < 1500; i++) {
         vec3 dx1, dp1, gr; float r;
@@ -481,14 +548,20 @@ void traceKerr(vec3 x, vec3 p, float qObs, out vec3 col, out float T, out vec3 d
         vec3 pn = p - h / 6.0 * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4);
 
         float stepLen = length(xn - x);
-        if (r > rH) col += T * vec3(1.0, 0.55, 0.25) * (uGlow * stepLen / max(r * r * r * r * 16.0 * KM * KM * KM * KM, 1.0));
+        wind += length(cross(x, xn)) / max(R * length(xn), 1e-6);
+        if (r > rH) {
+            float gw = stepLen / max(r * r * r * r * 16.0 * KM * KM * KM * KM, 1.0);
+            col += T * vec3(1.0, 0.55, 0.25) * (uGlow * gw * clamp(1.0 - glowUsed / 1.2, 0.0, 1.0));
+            glowUsed += gw;
+        }
         if (uObjCount > 0 && objectsAlong(fromStd(x), fromStd(xn), qObs, col, T)) return;
 
         if (uDiskOn > 0.5 && (x.z > 0.0) != (xn.z > 0.0)) {
             vec3 hit = mix(x, xn, x.z / (x.z - xn.z));
             float fh; vec3 lh;
             float hr = ksField(hit, fh, lh);
-            if (hr > uDiskIn && hr < uDiskOut) {
+            if (hr > uDiskIn && hr < uDiskOut && ++images <= 2) {
+                gRing = ringFade(wind);
                 shadeDisk(fromStd(hit), hr, kerrDiskShift(hr, Lz) * qObs, col, T);
                 if (T < 0.01) { dirOut = fromStd(normalize(-dx1)); return; }
             }
@@ -530,8 +603,12 @@ void kerrMain(vec3 rd, out vec3 col, out vec3 dir, out float q) {
     col = vec3(0.0); dir = rd;
     float T = 0.0, esc = 0.0;
     if (den > 1e-4) traceKerr(X, p, q, col, T, dir, esc);
-    float fp = clamp(length(fwidth(dir)), 2.0 * uFov / uRes.y, 0.05);
-    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0);
+    // right at the shadow's edge the sky seen through neighbouring pixels jumps around wildly; there the
+    // pixel would see the average of a huge patch of sky (almost black), so fade it instead of sparkling
+    float fpRaw = length(fwidth(dir));
+    float fp = clamp(fpRaw, 2.0 * uFov / uRes.y, 0.05);
+    float skySeen = 1.0 - smoothstep(0.012, 0.05, fpRaw);
+    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0) * skySeen;
 }
 
 void main() {
@@ -565,8 +642,10 @@ void main() {
     vec3 col = vec3(0.0), dir = rd; float T = 0.0, esc = 0.0;
     // eInf <= 0 only happens inside the horizon: such light never came from our universe
     if (eInf > 1e-4) trace(uCamPos, normalize(rdf + beta * rhat), q, col, T, dir, esc);
-    float fp = clamp(length(fwidth(dir)), 2.0 * uFov / uRes.y, 0.05);
-    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0);
+    float fpRaw = length(fwidth(dir));
+    float fp = clamp(fpRaw, 2.0 * uFov / uRes.y, 0.05);
+    float skySeen = 1.0 - smoothstep(0.012, 0.05, fpRaw);          // see kerrMain
+    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0) * skySeen;
     fragColor = vec4(col, 1.0);
 }
 )GLSL";

@@ -62,8 +62,8 @@ The app starts by playing it in a loop, letterboxed to 2.39:1 with titles, chapt
 
 Add them with **+ Add** in the Outliner (or right-click its empty space). Right-click an object to rename, duplicate or delete it, and use the eye icon to hide it. Up to 8 visible objects are traced at once. Each has its own settings in Details, and a film window: while the film plays it only shows between two times. Objects are saved with the sequence.
 - **Hot Spot:** a bubble of superheated gas on an orbit. Flares like this have been observed circling Sagittarius A*, the black hole at the centre of our galaxy. It is Doppler boosted by its real orbital speed, so it brightens on the side coming toward you, and you can see its lensed second image chase it around the ring.
-- **Planet:** an ocean world lit by the disk. Details shows its real time dilation for the current spin. On Miller's orbit at a = 0.6, one hour on the surface is about 1 h 31 min far away. *Interstellar*'s seven years per hour needs a black hole spinning within a hundred-trillionth of the maximum.
-- **Ship:** the Endurance, twelve modules on a spinning ring around a hub. It can orbit the hole or chase the camera; in chase mode it overtakes from behind when its film window opens, and pulls away ahead before it closes.
+- **Planet:** an ocean world lit by the disk, with long swells, drifting cloud bands, a sun glint and a thin glowing atmosphere. Details shows its real time dilation for the current spin. On Miller's orbit at a = 0.6, one hour on the surface is about 1 h 31 min far away. *Interstellar*'s seven years per hour needs a black hole spinning within a hundred-trillionth of the maximum.
+- **Ship:** the Endurance, twelve modules on a spinning ring around a hub, with lit windows. It can orbit the hole or fly the film camera's own path through space, a little ahead of it: it overtakes from behind when its film window opens and pulls away ahead before it closes. In the free camera it waits at its stretch of the path, so you can fly over to it.
 - **Relativistic Jet:** plasma shot out along the spin axis at a chosen speed. Relativistic beaming makes the jet coming toward you outshine the one going away. It's in the scene but switched off, because Gargantua in the film has none.
 
 Planet and ship sizes are cinematic: a real planet would be a speck next to a black hole of 100 million suns.
@@ -82,6 +82,10 @@ Like the film's black hole, Gargantua rotates, with spin a = 0.6 M (the value *I
 
 At spin 0 the faster Schwarzschild tracer is used.
 
+The spin also pushes the shadow sideways, toward the side of the disk that comes toward you (by roughly half a Schwarzschild radius at a = 0.6). That's why a relativistic jet, which comes out of the true spin axis, doesn't line up with the middle of the shadow. At spin 0 the two line up exactly.
+
+The thin bright line hugging the shadow is the photon ring: light that circled the hole before reaching you. It's far thinner than a pixel, so the tracer draws it with the disk's average brightness instead of its streaks, and leaves out the even thinner rings inside it; otherwise it would only sparkle.
+
 ## The physics of the fall (no spin)
 
 The camera is a free-falling observer. Inside the horizon, a hovering ("static") camera can't exist, so the ray tracer works in the free-falling frame instead (Painlevé–Gullstrand coordinates). In that frame space is flat, and a light ray's path is its local direction plus the fall velocity √(r_s/r). The maths is exact at every radius, including inside the horizon. What you see along the way:
@@ -98,14 +102,14 @@ There's no recorded music. The soundtrack is synthesised from the camera's state
 - **Time dilation drives a ticking clock:** a soft knock, once per second of far-away time, the same number the HUD shows. Far out it ticks once a second. During the fall it speeds up to 7 and then 30 ticks a second, because your clock runs that much slower. It stops dead when no outside clock exists any more: in the ergosphere and inside the horizon.
 - **The disk** adds a low roar when you're close to it, and the roar brightens with the Doppler shift you see straight ahead.
 - **Scene objects:** a ship nearby adds a low, slowly throbbing engine hum; a planet nearby adds the swell of its ocean.
-- **The cut to black** is total silence, including the reverb tail.
+- **The ending:** at the cut to black the clock, roar, hum and ocean stop with the picture, but the music doesn't. The organ resolves home to A minor and rings out in the hall over the end card.
 
 It plays live in the editor: fly the free camera toward the hole and listen. It also renders into videos sample-exact, and is saved as a WAV next to the video. The speaker button on the toolbar mutes it; the volume is under Film in Details.
 
 ## The editor
 
 The app opens as an editor laid out like Unreal Engine 5:
-- **Toolbar:** save/open, a Film / Free Camera switch, transport (start, play/pause, stop, end, loop) and playback speed. On the right: **Scalability**, Screenshot, Render and Cinema.
+- **Toolbar:** save/open, a Film / Free Camera switch, transport (start, play/pause, stop, end, loop), **freeze time** (P) and playback speed. On the right: **Scalability**, Screenshot, Render and Cinema.
 - **Viewport:** the live image. Left-drag orbits, right-drag looks around, and the wheel moves closer or farther. Grabbing the view during the film switches to the free camera at the exact current shot. The buttons in its top-left corner switch the camera, the black hole (Kerr / Schwarzschild), the quality and the letterbox.
 - **Outliner:** the scene's actors: Gargantua, Accretion Disk, Sky, Camera, Post Process and Film, plus the objects you add (hot spots, planets, ships, jets). **+ Add** creates one; right-click to rename, duplicate or delete; the eye icons show or hide.
 - **Details:** the properties of whatever is selected, in collapsible categories. Select something in the Outliner or the Sequencer to edit it here.
@@ -118,7 +122,7 @@ Drag any panel's tab to dock it somewhere else. Window > Reset Layout restores t
 
 The preview always starts on **Low** quality, so it runs on any GPU. Raise it with Scalability (Low, Medium, High, Ultra). Video renders and screenshots always use full quality, whatever the preview is set to.
 
-**Progressive refinement:** when the picture stops changing (the film paused, or the free camera still with time paused), the viewport re-traces it at full resolution with Ultra geodesics and sub-pixel jitter. It traces a few tiles per frame so the editor stays responsive, and averages up to 64 samples. Then it stops tracing, so the GPU goes idle. The status bar shows "Refining 12 / 64". It's on by default; turn it off in the viewport's quality menu.
+**Progressive refinement:** when the picture stops changing (the film paused, or time frozen with the hourglass button or P), the viewport re-traces it at full resolution with Ultra geodesics and sub-pixel jitter. It traces a few tiles per frame so the editor stays responsive, and averages up to 64 samples. Then it stops tracing, so the GPU goes idle. The status bar shows "Refining 12 / 64". It's on by default; turn it off in the viewport's quality menu.
 
 ## Renders
 

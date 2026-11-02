@@ -142,6 +142,11 @@ static void drawToolbar() {
         if (ed::toolButton("##end", ed::IC_END, nullptr, "Go to end")) { g_camMode = CAM_SEQUENCE; g_playhead = seqLength(); g_playing = false; }
         ImGui::SameLine(0, 1);
         if (ed::toolButton("##loop", ed::IC_LOOP, nullptr, "Loop playback", g_loop)) g_loop = !g_loop;
+        ImGui::SameLine(0, 1);
+        if (ed::toolButton("##freeze", ed::IC_FREEZE, nullptr, g_paused ? "Time is frozen. Click to let it run (P)"
+                                                                          : "Freeze time: the disk, orbits, ships and the free camera stop,\n"
+                                                                            "so Refine when still can sharpen the view (P)", g_paused,
+                           g_paused ? IM_COL32(120, 190, 255, 255) : 0)) g_paused = !g_paused;
         ImGui::SameLine(0, 8 * g_dpi);
         ImGui::SetNextItemWidth(70 * g_dpi);
         static const float speeds[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
@@ -200,6 +205,7 @@ static void drawStatusBar(float fps, int renderW, int renderH) {
             ImGui::ProgressBar(prog, ImVec2(220 * g_dpi, ImGui::GetTextLineHeight()), ov);
             ImGui::PopStyleColor();
         } else {
+            if (g_paused) { ImGui::TextColored(ed::rgb(120, 190, 255), "Time frozen"); ImGui::SameLine(); }
             ImGui::TextDisabled("%s", g_status.empty() ? "Ready" : g_status.c_str());
         }
         char right[200], preview[80];
@@ -351,6 +357,7 @@ static void helpWindows() {
             {"Left-drag viewport", "orbit the black hole"}, {"Right-drag viewport", "look around"},
             {"Mouse wheel", "move closer / farther"},       {"Space", "play / pause"},
             {"K", "add a camera key (Sequencer)"},          {"Delete", "delete the selected key or cue"},
+            {"P", "freeze / unfreeze time"},
             {"Tab", "cinema mode on / off"},                {"Esc", "leave cinema mode"},
             {"F11 / Alt+Enter", "fullscreen"},               {"F12", "screenshot"},
             {"Ctrl+O / Ctrl+S", "open / save sequence"},

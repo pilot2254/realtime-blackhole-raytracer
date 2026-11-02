@@ -49,7 +49,7 @@ void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx, float
     u1f(p, "uGalaxy", P.galaxy);
 
     ObjectGPU obj[MAX_OBJECTS];
-    int n = gatherObjects(t, cf, film, obj);
+    int n = gatherObjects(t, film, obj);
     float A[4 * MAX_OBJECTS] = {}, B[4 * MAX_OBJECTS] = {}, C[4 * MAX_OBJECTS] = {}, V[4 * MAX_OBJECTS] = {};
     for (int i = 0; i < n; i++)
         for (int k = 0; k < 4; k++) { A[4 * i + k] = obj[i].a[k]; B[4 * i + k] = obj[i].b[k]; C[4 * i + k] = obj[i].c[k]; V[4 * i + k] = obj[i].v[k]; }

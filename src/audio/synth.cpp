@@ -5,6 +5,7 @@
 #include "sim/params.h"
 #include "sim/physics.h"
 #include "sim/scene.h"
+#include "film/sequence.h"
 
 // ---------------------------------------------------------------- what the physics says
 SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
@@ -21,10 +22,23 @@ SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     CamFrame cf = camBasis(c);
     for (const SceneObject& o : g_objects) {
         if (!objectActive(o, t, film) || (o.type != SO_SHIP && o.type != SO_PLANET)) continue;
-        float d = len(objectPosition(o, t, cf) - cf.pos) - o.size;
+        float d = len(objectPosition(o, t, film) - cf.pos) - o.size;
         if (o.type == SO_SHIP)   s.hum   = std::max(s.hum, smoothstepf(4.0f, 0.6f, d));
         if (o.type == SO_PLANET) s.ocean = std::max(s.ocean, smoothstepf(3.5f, 0.8f, d));
     }
+    return s;
+}
+
+// After the cut to black the picture is gone but the music is not: the camera's state is held at the
+// cut, the effects stop, and the organ resolves home and dies away in the hall over the end card.
+SoundControls filmSound(float t) {
+    float L = seqLength(), cut = g_blackAt > 0.0f ? std::min(g_blackAt, L) : L;
+    if (t < cut) return soundControls(evalSequence(t), seqFade(t), t, true);
+    SoundControls s = soundControls(evalSequence(cut - 0.01f), 1.0f, cut, true);
+    s.level = std::exp(-(t - cut) / 3.2f);
+    s.coda = 1.0f;
+    s.tension = 0.45f;
+    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f;
     return s;
 }
 
@@ -110,7 +124,10 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         double ts = t + start / (double)RATE;
 
         // controls glide (about 150 ms; the master level is fast so cuts to black stay sharp)
-        float k = 1.0f - std::exp(-n / (0.15f * RATE)), kl = 1.0f - std::exp(-n / (0.012f * RATE));
+        // in the coda everything relaxes slowly (seconds), so nothing snaps off at the cut
+        float glide = target.coda > 0.5f ? 2.5f : 0.15f;
+        float k = 1.0f - std::exp(-n / (glide * RATE)), kl = 1.0f - std::exp(-n / ((target.coda > 0.5f ? 0.4f : 0.012f) * RATE));
+        codaMix += (target.coda - codaMix) * (1.0f - std::exp(-n / (1.2f * RATE)));
         cur.tension   += (target.tension - cur.tension) * k;
         cur.tickLevel += (target.tickLevel - cur.tickLevel) * k;
         cur.roar      += (target.roar - cur.roar) * k;
@@ -128,9 +145,10 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         float in = (float)(cyc - ci * CHORD_LEN);
         float x = smoothstepf(CHORD_LEN - CROSSFADE, CHORD_LEN, in);
         w[ci] = 1.0f - x; w[(ci + 1) % 4] = x;
+        for (int c = 0; c < 4; c++) w[c] = w[c] * (1.0f - codaMix) + (c == 0 ? codaMix : 0.0f);   // home: A minor
 
         float T = cur.tension;
-        float organ   = 0.30f + 0.70f * T;                       // the whole organ swells as we close in
+        float organ   = 0.14f + 0.86f * T;                       // near silence far away, swelling as we close in
         float pedal   = smoothstepf(0.10f, 0.55f, T);
         float octave  = smoothstepf(0.35f, 0.85f, T);
         float shimmer = smoothstepf(0.60f, 1.00f, T);

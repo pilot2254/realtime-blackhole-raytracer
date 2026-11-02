@@ -55,6 +55,7 @@ constexpr GLenum K_FRAGMENT_SHADER = 0x8B30, K_VERTEX_SHADER = 0x8B31, K_COMPILE
                  K_FRAMEBUFFER_COMPLETE = 0x8CD5, K_TEXTURE0 = 0x84C0, K_RGBA16F = 0x881A,
                  K_RGBA8 = 0x8058, K_CLAMP_TO_EDGE = 0x812F, K_BGR = 0x80E0, K_BGRA = 0x80E1;
 
+extern const char* g_errorLog;                  // when set (batch modes), fatal() writes here instead of a dialog
 [[noreturn]] void fatal(const char* title, const std::string& msg);
 
 GLuint compileShader(GLenum type, std::vector<const char*> src, const char* name);

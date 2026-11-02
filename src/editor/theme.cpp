@@ -140,6 +140,11 @@ void drawIcon(ImDrawList* dl, int icon, ImVec2 c, float s, ImU32 col) {
                      dl->AddCircleFilled(c, s * 0.2f, IM_COL32(0, 0, 0, 255), 8); break;
     case IC_EHT:     dl->AddCircle(c, s * 0.65f, IM_COL32(255, 150, 40, 255), 18, t * 2.2f);
                      dl->AddCircle(P(0.25f, 0.2f), s * 0.25f, IM_COL32(255, 220, 120, 255), 10, t * 1.6f); break;
+    case IC_FREEZE:  // hourglass
+                     dl->AddLine(P(-0.6f, -0.8f), P(0.6f, -0.8f), col, t * 1.4f);
+                     dl->AddLine(P(-0.6f, 0.8f), P(0.6f, 0.8f), col, t * 1.4f);
+                     dl->AddTriangleFilled(P(-0.5f, -0.7f), P(0.5f, -0.7f), P(0.0f, 0.0f), col);
+                     dl->AddTriangle(P(-0.5f, 0.7f), P(0.5f, 0.7f), P(0.0f, 0.0f), col, t); break;
     case IC_SOUND:
     case IC_MUTE:   dl->AddRectFilled(P(-0.85f, -0.3f), P(-0.5f, 0.3f), col);
                     dl->AddTriangleFilled(P(-0.55f, -0.3f), P(0.0f, -0.75f), P(0.0f, 0.75f), col);

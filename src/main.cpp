@@ -36,6 +36,7 @@
 #include "render/renderer.h"
 #include "sim/params.h"
 #include "sim/physics.h"
+#include "sim/scene.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -92,6 +93,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         case VK_F11:    toggleFullscreen(); break;
         case VK_F12:    if (!g_job.active) beginExport(true); break;
         case VK_TAB:    if (g_showUI) enterCinema(); else g_showUI = true; break;
+        case 'P':       g_paused = !g_paused; break;                // freeze all motion
         case VK_SPACE:
             if (g_camMode == CAM_SEQUENCE) g_playing = !g_playing; else g_paused = !g_paused;
             break;
@@ -124,6 +126,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
 int main() {
     ImGui_ImplWin32_EnableDpiAwareness();
+    g_filmCameraAt = evalSequence;
     defaultSequence();
 
     // --stills t1,t2,...  [--res 0..3] [--samples n] [--spin a] [--sequence file] [--prefix name_]
@@ -152,6 +155,7 @@ int main() {
         }
     }
     size_t stillNext = 0;
+    if (!stills.empty() || renderMode) { CreateDirectoryA("renders", nullptr); g_errorLog = "renders/error_log.txt"; }
 
     HINSTANCE inst = GetModuleHandleA(nullptr);
     WNDCLASSA wc = {};
@@ -231,7 +235,7 @@ int main() {
         if (!g_job.active) {
             if (!g_paused) g_simTime += dt;
             if (g_camMode == CAM_ORBIT && g_autoRotate && !g_paused && !g_dragging) g_orbit.phi += g_rotSpeed * dt;
-            if (g_camMode == CAM_SEQUENCE && g_playing) {
+            if (g_camMode == CAM_SEQUENCE && g_playing && !g_paused) {
                 g_playhead += dt * g_playSpeed;
                 float L = seqLength();
                 if (g_playhead > L) { if (g_loop && L > 0) g_playhead = std::fmod(g_playhead, L); else { g_playhead = L; g_playing = false; } }
@@ -282,8 +286,9 @@ int main() {
 
         // ---- sound: the organ follows the camera live; silent while paused or rendering
         {
-            bool running = !g_job.active && (g_camMode == CAM_SEQUENCE ? g_playing : !g_paused);
-            SoundControls ctl = soundControls(currentCam(), currentFade(), currentTime(), g_camMode == CAM_SEQUENCE);
+            bool running = !g_job.active && !g_paused && (g_camMode == CAM_ORBIT || g_playing);
+            SoundControls ctl = g_camMode == CAM_SEQUENCE ? filmSound(g_playhead)
+                                                          : soundControls(currentCam(), 1.0f, currentTime(), false);
             ctl.level *= (g_soundOn && running) ? g_volume : 0.0f;
             audioPump(currentTime(), running, ctl);
         }

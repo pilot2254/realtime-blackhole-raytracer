@@ -90,7 +90,7 @@ bool renderSoundtrack(const std::string& path, float seconds) {
     for (int i = 0; i < frames; i += B) {
         int n = std::min(B, frames - i);
         float t = i / (float)Synth::RATE;
-        synth.render(buf.data(), n, t, soundControls(evalSequence(t), seqFade(t), t, true));
+        synth.render(buf.data(), n, t, filmSound(t));
         for (int k = 0; k < n * 2; k++) pcm[k] = toPcm(buf[k]);
         std::fwrite(pcm.data(), 2, (size_t)n * 2, f);
     }

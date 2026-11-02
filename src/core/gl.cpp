@@ -1,4 +1,5 @@
 #include "core/gl.h"
+#include <cstdio>
 
 #define GLX_DEFINE(ret, name, args) PFN_##name p_##name = nullptr;
 GLX_FUNCTIONS(GLX_DEFINE)
@@ -14,7 +15,13 @@ bool loadGL() {
     return ok;
 }
 
+const char* g_errorLog = nullptr;
+
 [[noreturn]] void fatal(const char* title, const std::string& msg) {
+    if (g_errorLog) {
+        if (FILE* f = std::fopen(g_errorLog, "w")) { std::fprintf(f, "%s\n%s\n", title, msg.c_str()); std::fclose(f); }
+        ExitProcess(1);
+    }
     MessageBoxA(nullptr, msg.c_str(), title, MB_OK | MB_ICONERROR);
     ExitProcess(1);
 }

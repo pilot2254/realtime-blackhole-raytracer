@@ -207,10 +207,12 @@ static void detailsSceneObject() {
         break;
     case SO_SHIP:
         if (category("Motion") && beginProps("so_motion")) {
-            propCheck("Chase the camera", &o.follow, "Fly alongside the camera, entering and leaving with the film window.");
+            propCheck("Fly the film's path", &o.follow, "Fly along the film camera's path, a little ahead of it: it overtakes the camera\n"
+                                                         "when its film window opens and speeds off before it closes. In the free camera it\n"
+                                                         "waits on its stretch of the path.");
             if (o.follow) {
-                propDrag("Ahead", &o.offset.x, 0.01f, -5.0f, 10.0f, "%.2f r_s");
-                propDrag("Right", &o.offset.y, 0.01f, -5.0f, 5.0f, "%.2f r_s");
+                propDrag("Lead", &o.offset.x, 0.01f, -10.0f, 10.0f, "%.2f s ahead", "How far ahead of the camera, in seconds along its path.");
+                propDrag("Toward the hole", &o.offset.y, 0.01f, -5.0f, 5.0f, "%.2f r_s");
                 propDrag("Up", &o.offset.z, 0.01f, -5.0f, 5.0f, "%.2f r_s");
             } else {
                 orbitProps(o);

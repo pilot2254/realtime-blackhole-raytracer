@@ -21,7 +21,7 @@ static void defaultObjects() {
 
     // overtakes the camera over the disk in act IV, then pulls away ahead
     SceneObject ship = makeObject(SO_SHIP);
-    ship.follow = true; ship.offset = {1.35f, -0.36f, -0.10f}; ship.size = 0.14f; ship.spin = 0.4f;
+    ship.follow = true; ship.offset = {1.3f, 0.45f, -0.15f}; ship.size = 0.14f; ship.spin = 0.4f;
     ship.t0 = 89.0f; ship.t1 = 117.0f;
     std::snprintf(ship.name, sizeof ship.name, "Endurance");
     g_objects.push_back(ship);

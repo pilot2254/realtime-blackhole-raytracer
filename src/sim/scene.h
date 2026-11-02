@@ -20,24 +20,25 @@ struct SceneObject {
     float size = 0.3f;                          // radius, r_s
     float temp = 3500.0f, bright = 3.0f;        // hot spot / jet emission
     V3    color = {0.20f, 0.33f, 0.40f};        // planet ocean / ship hull
-    // ship: chase the camera instead of orbiting
+    // ship: fly along the film camera's path instead of orbiting
     bool  follow = false;
-    V3    offset = {1.4f, -0.35f, -0.12f};      // ahead, right, up, in camera space (r_s)
+    V3    offset = {1.2f, 0.45f, -0.15f};       // lead (seconds ahead on the path), toward the hole, up (r_s)
     float spin = 0.4f;                          // ring rotation, rad per second / jet speed (v/c)
     char  name[48] = "Object";
 };
 extern std::vector<SceneObject> g_objects;
+extern CamState (*g_filmCameraAt)(float t);     // the film's camera path, set by the app (ships fly along it)
 
 const char* objectTypeName(int type);
 SceneObject makeObject(int type);               // a sensible default of each kind
 bool  objectActive(const SceneObject& o, float t, bool film);
-V3    objectPosition(const SceneObject& o, float t, const CamFrame& cam, V3* velocity = nullptr, V3* axis = nullptr);
+V3    objectPosition(const SceneObject& o, float t, bool film, V3* velocity = nullptr, V3* axis = nullptr);
 float orbitClockRate(float r);                  // circular-orbit time dilation (dt/dtau), < 0 if no such orbit
 uint64_t objectsHash();
 
 // packed for the shader: per object 4 vec4s
 struct ObjectGPU { float a[4], b[4], c[4], v[4]; };
-int  gatherObjects(float t, const CamFrame& cam, bool film, ObjectGPU out[MAX_OBJECTS]);
+int  gatherObjects(float t, bool film, ObjectGPU out[MAX_OBJECTS]);
 
 void saveObjects(FILE* f);
 bool parseObjectLine(const char* line, SceneObject& o);
