@@ -6,7 +6,7 @@ set SRC=main.cpp %IMGUI%\imgui.cpp %IMGUI%\imgui_draw.cpp %IMGUI%\imgui_tables.c
 
 where cl >nul 2>nul
 if %errorlevel%==0 (
-    cl /nologo /O2 /EHsc /std:c++17 /I%IMGUI% /I%IMGUI%\backends %SRC% /Fe:gargantua_studio.exe
+    cl /nologo /utf-8 /O2 /EHsc /std:c++17 /I%IMGUI% /I%IMGUI%\backends %SRC% /Fe:gargantua_studio.exe
 ) else (
     g++ -O2 -std=c++17 -I%IMGUI% -I%IMGUI%\backends %SRC% -o gargantua_gl.exe -static -lopengl32 -lgdi32 -luser32 -ldwmapi -mwindows
 )

@@ -123,6 +123,8 @@ uniform vec3  uCamRight;
 uniform vec3  uCamUp;
 uniform float uFov;
 uniform float uStep;
+uniform vec3  uCamVel;      // camera velocity relative to a free-falling ("rain") observer, units of c
+uniform float uObsShift;    // how much of the camera's own Doppler/gravitational shift is shown
 
 uniform float uGravity;
 uniform float uDiskOn;
@@ -283,7 +285,7 @@ float diskTex(float r, float ang, float t) {
     return 0.12 + 1.35 * acc;
 }
 
-void shadeDisk(vec3 hit, float r, vec3 rayDir, inout vec3 col, inout float T) {
+void shadeDisk(vec3 hit, float r, vec3 rayDir, float qObs, inout vec3 col, inout float T) {
     float ang  = atan(hit.z, hit.x);
     float tex  = diskTex(r, ang, uTime);
     float x    = uDiskIn / r;
@@ -298,14 +300,14 @@ void shadeDisk(vec3 hit, float r, vec3 rayDir, inout vec3 col, inout float T) {
     float cosT  = -dot(tang, rayDir);
     float D     = mix(1.0, 1.0 / (gamma * (1.0 - beta * cosT)), uDoppler);
     float g     = mix(1.0, sqrt(max(1.0 - RS / r, 0.0)), uRedshift);
-    float s     = D * g;
+    float s     = D * g * qObs;
 
     float I = x * x * edge * tex * min(pow(s, 4.0), 25.0);
     col += T * blackbody(temp * s) * I * uDiskBright;
     T   *= 1.0 - clamp(pow(x, 1.1) * edge * tex * uDiskOpacity, 0.0, 0.95);
 }
 
-void trace(vec3 ro, vec3 rd, out vec3 col, out float T, out vec3 dirOut, out float escaped) {
+void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dirOut, out float escaped) {
     vec3 p = ro, v = rd;
     vec3 L = cross(p, v);
     float k = 1.5 * dot(L, L) * uGravity;
@@ -314,24 +316,26 @@ void trace(vec3 ro, vec3 rd, out vec3 col, out float T, out vec3 dirOut, out flo
     for (int i = 0; i < 1200; i++) {
         float r2 = dot(p, p);
         float r  = sqrt(r2);
-        if (r < RS) { dirOut = normalize(v); return; }
+        // traced backwards in time, a ray only dies falling into the horizon; from a camera inside the
+        // horizon every ray starts out moving outward
+        if (r < RS && dot(p, v) < 0.0) { dirOut = normalize(v); return; }
         if (r > ESCAPE_R && dot(p, v) > 0.0) { escaped = 1.0; dirOut = normalize(v); return; }
 
-        float dt = clamp(uStep * r, 0.002, 2.5) / length(v);
+        float dt = clamp(uStep * r, 0.0003, 2.5) / length(v);
         vec3 pp = p;
         v += (-k * p / (r2 * r2 * r)) * (0.5 * dt);
         p += v * dt;
         r2 = dot(p, p); r = sqrt(r2);
         v += (-k * p / (r2 * r2 * r)) * (0.5 * dt);
 
-        col += T * vec3(1.0, 0.55, 0.25) * (uGlow * dt * length(v) / (r2 * r2));
+        col += T * vec3(1.0, 0.55, 0.25) * (uGlow * dt * length(v) / max(r2 * r2, 1.0));
 
         if (uDiskOn > 0.5 && (pp.y > 0.0) != (p.y > 0.0)) {
             float f  = pp.y / (pp.y - p.y);
             vec3 hit = mix(pp, p, f);
             float hr = length(hit);
             if (hr > uDiskIn && hr < uDiskOut) {
-                shadeDisk(hit, hr, normalize(v), col, T);
+                shadeDisk(hit, hr, normalize(v), qObs, col, T);
                 if (T < 0.01) { dirOut = normalize(v); return; }
             }
         }
@@ -339,13 +343,36 @@ void trace(vec3 ro, vec3 rd, out vec3 col, out float T, out vec3 dirOut, out flo
     dirOut = normalize(v);
 }
 
+// colour change of a white source seen with frequency ratio q
+vec3 shiftTint(float q) { return blackbody(6500.0 * q) / blackbody(6500.0); }
+
 void main() {
     vec2 uv = (2.0 * (gl_FragCoord.xy + uJitter) - uRes) / uRes.y;
     vec3 rd = normalize(uCamFwd + uCamRight * (uv.x * uFov) + uCamUp * (uv.y * uFov));
-    vec3 col, dir; float T, esc;
-    trace(uCamPos, rd, col, T, dir, esc);
+
+    // 1) camera frame -> local free-fall frame: relativistic aberration by the camera velocity
+    vec3  n   = -rd;                                    // direction the photon travels
+    float vv  = dot(uCamVel, uCamVel);
+    float gam = inversesqrt(1.0 - vv);
+    float vn  = dot(uCamVel, n);
+    vec3  nf  = (n + uCamVel * ((gam - 1.0) * vn / max(vv, 1e-12) + gam)) / (gam * (1.0 + vn));
+    vec3  rdf = -normalize(nf);
+
+    // 2) free-fall frame -> spatial path. Free-falling observers see flat space (Painleve-Gullstrand
+    //    coordinates), the photon's coordinate velocity is its local direction minus the fall velocity
+    //    beta = sqrt(r_s / r). This is exact at every radius, inside the horizon too.
+    float rc   = length(uCamPos);
+    vec3  rhat = uCamPos / rc;
+    float beta = sqrt(max(uGravity, 0.0) * RS / rc);
+    float eInf = 1.0 + beta * dot(rdf, rhat);           // photon energy at infinity / energy seen here
+    float q    = 1.0 / (gam * (1.0 + vn) * max(eInf, 1e-4));
+    q = clamp(pow(q, uObsShift), 0.02, 50.0);           // frequency seen by the camera / at infinity
+
+    vec3 col = vec3(0.0), dir = rd; float T = 0.0, esc = 0.0;
+    // eInf <= 0 only happens inside the horizon: such light never came from our universe
+    if (eInf > 1e-4) trace(uCamPos, normalize(rdf + beta * rhat), q, col, T, dir, esc);
     float fp = clamp(length(fwidth(dir)), 2.0 * uFov / uRes.y, 0.05);
-    if (esc > 0.5) col += T * sky(dir, fp);
+    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0);
     fragColor = vec4(col, 1.0);
 }
 )GLSL";
@@ -401,6 +428,9 @@ uniform float uVignette;
 uniform float uCA;
 uniform float uGrain;
 uniform float uFade;
+uniform sampler2D uOverlay;   // titles / captions / HUD, brightness = coverage, rows top-down
+uniform float uOverlayOn;
+uniform float uBar;           // letterbox bar height in pixels
 
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -420,6 +450,15 @@ void main() {
     c *= uFade;
     c = pow(c, vec3(1.0 / 2.2));
     c += (hash(gl_FragCoord.xy + fract(uTime) * 917.0) - 0.5) * (uGrain / 255.0);
+    if (gl_FragCoord.y < uBar || gl_FragCoord.y > uRes.y - uBar) c = vec3(0.0);
+    if (uOverlayOn > 0.5) {
+        vec2 ov = vec2(uv.x, 1.0 - uv.y);
+        vec2 px = vec2(uRes.y / 1080.0) / uRes;
+        float sh = 0.0;
+        for (int i = 1; i <= 4; i++) sh += texture(uOverlay, ov + px * vec2(-1.2, 1.2) * float(i)).g;
+        c *= 1.0 - 0.6 * clamp(sh * 0.35, 0.0, 1.0);
+        c = mix(c, vec3(0.97, 0.94, 0.88), texture(uOverlay, ov).g);
+    }
     o = vec4(c, 1.0);
 }
 )GLSL";
@@ -514,8 +553,11 @@ static const float PI = 3.14159265f;
 struct V3 { float x, y, z; };
 static V3 operator+(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 static V3 operator*(V3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+static float dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 static V3 cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
-static V3 norm(V3 a) { float l = std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z); return a * (1.0f / l); }
+static V3 operator-(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+static float len(V3 a) { return std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z); }
+static V3 norm(V3 a) { return a * (1.0f / len(a)); }
 static float smoothstepf(float e0, float e1, float x) {
     float t = std::min(1.0f, std::max(0.0f, (x - e0) / (e1 - e0)));
     return t * t * (3.0f - 2.0f * t);
@@ -526,25 +568,35 @@ static float halton(int i, int b) {
     return r;
 }
 
-// camera: spherical orbit around the hole
+// camera: spherical position around the hole, looking at it, turned by yaw/pitch.
+// fall: 0 = hovering in place (rockets on), 1 = free fall from rest at infinity.
 struct CamState {
     float phi = 0.0f, el = 0.19f, dist = 24.0f, roll = 0.0f, fov = 0.40f;   // fov = tan(half vertical FOV)
+    float yaw = 0.0f, pitch = 0.0f, fall = 0.0f;
+    static const int N = 8;
     float& operator[](int i) { return (&phi)[i]; }
     float  operator[](int i) const { return (&phi)[i]; }
 };
-struct CamFrame { V3 pos, fwd, right, up; float fov; };
+struct CamFrame { V3 pos, fwd, right, up; float fov, fall; };
+
+static const float MIN_DIST = 0.03f;
 
 static CamFrame camBasis(const CamState& c) {
     CamFrame f;
     float el = std::max(-1.55f, std::min(1.55f, c.el));
-    float d  = std::max(1.6f, c.dist);
+    float d  = std::max(MIN_DIST, c.dist);
     f.pos = {d * std::cos(el) * std::cos(c.phi), d * std::sin(el), d * std::cos(el) * std::sin(c.phi)};
-    f.fwd = norm(f.pos * -1.0f);
-    V3 r = norm(cross(f.fwd, V3{0, 1, 0}));
-    V3 u = cross(r, f.fwd);
-    f.right = r * std::cos(c.roll) + u * std::sin(c.roll);
-    f.up    = u * std::cos(c.roll) + r * -std::sin(c.roll);
+    V3 fwd = norm(f.pos * -1.0f);
+    V3 r = norm(cross(fwd, V3{0, 1, 0}));
+    V3 u = cross(r, fwd);
+    V3 f1 = fwd * std::cos(c.yaw) + r * std::sin(c.yaw);           // yaw turns right
+    V3 r1 = r * std::cos(c.yaw) - fwd * std::sin(c.yaw);
+    f.fwd = f1 * std::cos(c.pitch) + u * std::sin(c.pitch);        // pitch tilts up
+    V3 u2 = u * std::cos(c.pitch) - f1 * std::sin(c.pitch);
+    f.right = r1 * std::cos(c.roll) + u2 * std::sin(c.roll);
+    f.up    = u2 * std::cos(c.roll) + r1 * -std::sin(c.roll);
     f.fov   = c.fov;
+    f.fall  = std::max(0.0f, std::min(1.0f, c.fall));
     return f;
 }
 
@@ -554,7 +606,7 @@ struct Params {
     float gravity = 1.0f, doppler = 1.0f, redshift = 1.0f;
     bool  disk = true;
     float diskIn = 3.0f, diskOut = 16.0f, tempPeak = 8000.0f, diskBright = 1.25f, diskOpacity = 1.8f;
-    float swirl = 1.0f, glow = 0.005f;
+    float swirl = 1.0f, glow = 0.005f, obsShift = 1.0f, autoExposure = 1.0f;
     float stars = 1.0f, milky = 1.0f, nebula = 1.0f, galaxy = 1.0f;
     float exposure = 1.0f, bloom = 0.06f, vignette = 0.45f, ca = 0.010f, grain = 2.5f;
 } P;
@@ -562,7 +614,16 @@ struct Params {
 struct Key { float t; CamState c; };
 static std::vector<Key> g_keys;
 static float g_playhead = 0.0f, g_playSpeed = 1.0f, g_fadeIn = 2.0f, g_fadeOut = 3.0f;
+static float g_blackAt = 0.0f;      // picture fully black from here on (0 = end of sequence)
 static bool  g_playing = true, g_loop = true;
+
+// on-screen text, timed with the sequence
+enum { CUE_TITLE = 0, CUE_SUBTITLE, CUE_CAPTION, CUE_CHAPTER, CUE_HUD, CUE_STYLES };
+struct Cue { float t0, t1; int style; std::string text; };
+static std::vector<Cue> g_cues;
+static bool  g_cuesOn = true, g_letterboxOn = true;
+static float g_letterbox = 2.39f;
+static float g_massSun = 1.0e8f;    // Gargantua, Kip Thorne's figure for the film
 
 enum { CAM_ORBIT = 0, CAM_SEQUENCE = 1 };
 static int      g_camMode = CAM_SEQUENCE;
@@ -583,19 +644,56 @@ static WINDOWPLACEMENT g_wp = {sizeof(WINDOWPLACEMENT)};
 static void defaultSequence() {
     // the galaxy sits in direction G; parking the camera at -G puts it right behind the hole
     const float galPhi = 1.8828f, galEl = 0.2019f;
+    //        t      phi     el      dist    roll    fov    yaw    pitch  fall
     g_keys = {
-        { 0.0f, {-0.60f, 0.05f, 140.0f,  0.00f, 0.32f}},   // deep space, faint lensing of the stars
-        { 8.0f, {-0.30f, 0.10f,  60.0f,  0.05f, 0.38f}},   // approach
-        {18.0f, { 0.40f, 0.06f,  26.0f, -0.12f, 0.42f}},   // edge-on, the classic shot
-        {26.0f, { 0.90f, 0.55f,  24.0f,  0.00f, 0.42f}},   // rising
-        {33.0f, { 1.30f, 1.25f,  22.0f,  0.00f, 0.45f}},   // top-down: the whole disk, swirling
-        {40.0f, { 1.75f, 0.35f,  30.0f,  0.05f, 0.40f}},   // swing down
-        {46.0f, {galPhi, galEl,  40.0f,  0.00f, 0.30f}},   // galaxy directly behind -> Einstein ring
-        {50.0f, {galPhi, galEl,  40.0f,  0.00f, 0.30f}},   // hold
-        {56.0f, { 2.60f, 0.12f,   9.0f, -0.25f, 0.55f}},   // dive in, skim the disk
-        {62.0f, { 3.40f, 0.18f,   7.5f, -0.10f, 0.60f}},
-        {70.0f, { 3.90f, 0.25f,  90.0f,  0.00f, 0.35f}},   // pull back out
+        {  0.0f, {-0.95f,  0.04f, 260.0f,  0.00f, 0.30f,  0.0f,  0.00f, 0.0f}},  // I. a dot bending the stars
+        { 12.0f, {-0.65f,  0.07f, 110.0f,  0.03f, 0.33f,  0.0f,  0.00f, 0.0f}},
+        { 24.0f, {-0.20f,  0.09f,  40.0f, -0.05f, 0.40f,  0.0f,  0.00f, 0.0f}},
+        { 34.0f, { 0.40f,  0.05f,  27.0f, -0.12f, 0.42f,  0.0f,  0.00f, 0.0f}},  // edge-on, the classic shot
+        { 44.0f, { 0.95f,  0.42f,  25.0f, -0.05f, 0.44f,  0.0f,  0.00f, 0.0f}},  // II. rising
+        { 54.0f, { 1.40f,  1.28f,  23.0f,  0.00f, 0.48f,  0.0f,  0.00f, 0.0f}},  // top-down whirlpool
+        { 62.0f, { 1.70f,  0.62f,  30.0f,  0.04f, 0.42f,  0.0f,  0.00f, 0.0f}},
+        { 70.0f, {galPhi, galEl,   42.0f,  0.00f, 0.30f,  0.0f,  0.00f, 0.0f}},  // III. Einstein ring
+        { 78.0f, {galPhi + 0.04f, galEl + 0.01f, 40.0f, 0.00f, 0.30f, 0.0f, 0.00f, 0.0f}},
+        { 88.0f, { 2.55f,  0.20f,  15.0f, -0.12f, 0.52f, -0.30f,  0.00f, 0.0f}},  // IV. down to the disk
+        { 98.0f, { 3.40f,  0.11f,   9.0f, -0.22f, 0.62f, -0.80f, -0.04f, 0.0f}},  // skimming, looking ahead
+        {108.0f, { 4.35f,  0.10f,   7.5f, -0.18f, 0.62f, -0.65f, -0.03f, 0.0f}},
+        {118.0f, { 5.10f,  0.16f,   6.5f, -0.06f, 0.55f, -0.20f,  0.00f, 0.0f}},  // turning to face it
+        {126.0f, { 5.40f,  0.24f,   5.2f,  0.00f, 0.50f,  0.00f,  0.00f, 1.0f}},  // V. let go: free fall
+        {136.0f, { 5.65f,  0.30f,   3.0f,  0.04f, 0.52f,  0.00f,  0.00f, 1.0f}},  // past the inner edge
+        {146.0f, { 5.85f,  0.34f,   1.6f,  0.08f, 0.58f,  0.30f,  0.05f, 1.0f}},  // photon sphere
+        {154.0f, { 5.95f,  0.36f,   1.0f,  0.10f, 0.62f,  0.65f,  0.08f, 1.0f}},  // event horizon
+        {160.0f, { 6.00f,  0.37f,   0.6f,  0.08f, 0.65f,  1.05f,  0.10f, 1.0f}},
+        {168.0f, { 6.03f,  0.38f,   0.25f, 0.02f, 0.70f,  1.65f,  0.10f, 1.0f}},  // turn to the band of sky
+        {175.0f, { 6.05f,  0.38f,   0.06f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // the end of time
+        {186.0f, { 6.05f,  0.38f,   0.06f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // end card on black
     };
+    g_cues = {
+        {  2.5f,  11.0f, CUE_TITLE,    "GARGANTUA"},
+        {  4.5f,  11.0f, CUE_SUBTITLE, "a journey past the point of no return"},
+        { 13.0f,  20.5f, CUE_CAPTION,  "A black hole of 100 million suns. Its event horizon is wider than the orbit of the Earth."},
+        { 24.0f,  31.0f, CUE_CHAPTER,  "I   ·   THE SHADOW"},
+        { 27.0f,  34.5f, CUE_CAPTION,  "The glow above and below the shadow is the far side of the disk, its light bent around the hole by gravity."},
+        { 37.0f,  44.5f, CUE_CAPTION,  "One side of the disk rushes toward us at nearly half the speed of light — brighter and bluer. The other side recedes."},
+        { 46.0f,  53.0f, CUE_CHAPTER,  "II   ·   THE WHIRLPOOL"},
+        { 49.0f,  57.0f, CUE_CAPTION,  "From above: gas spiralling inward, heated by friction until it glows."},
+        { 63.0f,  70.0f, CUE_CHAPTER,  "III   ·   THE RING"},
+        { 66.0f,  76.0f, CUE_CAPTION,  "A galaxy sits exactly behind the black hole. Gravity bends its light into a perfect circle — an Einstein ring."},
+        { 81.0f,  88.0f, CUE_CHAPTER,  "IV   ·   THE DISK"},
+        { 84.0f, 174.5f, CUE_HUD,      ""},
+        { 90.0f,  97.0f, CUE_CAPTION,  "Skimming the disk. The gas below circles the hole once every few days, faster the closer it gets."},
+        {104.0f, 112.0f, CUE_CAPTION,  "The inner edge, three Schwarzschild radii out. Closer than this no orbit is stable — everything spirals in."},
+        {119.0f, 126.0f, CUE_CHAPTER,  "V   ·   THE FALL"},
+        {121.0f, 128.5f, CUE_CAPTION,  "We stop fighting gravity and let go. From here on, we are in free fall."},
+        {131.0f, 138.0f, CUE_CAPTION,  "Our own speed squeezes the view ahead and makes it brighter. Light from behind us turns red."},
+        {141.0f, 148.5f, CUE_CAPTION,  "The photon sphere, 1.5 Schwarzschild radii. Here, light itself can travel in circles around the hole."},
+        {150.5f, 158.0f, CUE_CAPTION,  "The event horizon. We cross it and feel nothing. For a black hole this large, the tides here are gentle."},
+        {159.5f, 166.0f, CUE_CAPTION,  "Inside, the singularity is no longer a place. It is a moment in our future, and it cannot be avoided."},
+        {167.0f, 174.0f, CUE_CAPTION,  "The whole universe is squeezed into one thin band of light around us."},
+        {177.0f, 185.0f, CUE_TITLE,    "GARGANTUA"},
+        {177.5f, 185.0f, CUE_SUBTITLE, "every pixel is a ray of light traced through curved spacetime"},
+    };
+    g_fadeIn = 3.0f; g_fadeOut = 0.25f; g_blackAt = 175.0f;
 }
 static float seqLength() { return g_keys.empty() ? 0.0f : g_keys.back().t; }
 
@@ -616,16 +714,17 @@ static CamState evalSequence(float t) {
     float h00 = 2 * u * u * u - 3 * u * u + 1, h10 = u * u * u - 2 * u * u + u;
     float h01 = -2 * u * u * u + 3 * u * u,    h11 = u * u * u - u * u;
     CamState out;
-    for (int c = 0; c < 5; c++)
+    for (int c = 0; c < CamState::N; c++)
         out[c] = h00 * a.c[c] + h10 * h * tangent(k, c) + h01 * b.c[c] + h11 * h * tangent(k + 1, c);
-    out.dist = std::max(2.0f, out.dist);
+    out.dist = std::max(MIN_DIST, out.dist);
     out.fov  = std::max(0.05f, out.fov);
+    out.fall = std::max(0.0f, std::min(1.0f, out.fall));
     return out;
 }
 static float seqFade(float t) {
-    float L = seqLength();
+    float L = g_blackAt > 0 ? std::min(g_blackAt, seqLength()) : seqLength();
     float a = g_fadeIn  > 0 ? smoothstepf(0.0f, g_fadeIn, t) : 1.0f;
-    float b = g_fadeOut > 0 ? smoothstepf(L, L - g_fadeOut, t) : 1.0f;
+    float b = g_fadeOut > 0 ? smoothstepf(L, L - g_fadeOut, t) : (t <= L ? 1.0f : 0.0f);
     return a * b;
 }
 static void sortKeys() { std::sort(g_keys.begin(), g_keys.end(), [](const Key& a, const Key& b) { return a.t < b.t; }); }
@@ -643,8 +742,12 @@ static void addKey(float t, CamState c) {
 static bool saveSequence(const char* path) {
     FILE* f = std::fopen(path, "w");
     if (!f) return false;
-    std::fprintf(f, "# time phi elevation distance roll fov\n");
-    for (auto& k : g_keys) std::fprintf(f, "%f %f %f %f %f %f\n", k.t, k.c.phi, k.c.el, k.c.dist, k.c.roll, k.c.fov);
+    std::fprintf(f, "# time phi elevation distance roll fov yaw pitch fall\n");
+    for (auto& k : g_keys)
+        std::fprintf(f, "%f %f %f %f %f %f %f %f %f\n", k.t, k.c.phi, k.c.el, k.c.dist, k.c.roll, k.c.fov, k.c.yaw, k.c.pitch, k.c.fall);
+    std::fprintf(f, "fade %f %f %f\n", g_fadeIn, g_fadeOut, g_blackAt);
+    std::fprintf(f, "# cue start end style(0 title, 1 subtitle, 2 caption, 3 chapter, 4 HUD) text\n");
+    for (auto& c : g_cues) std::fprintf(f, "cue %f %f %d %s\n", c.t0, c.t1, c.style, c.text.c_str());
     std::fclose(f);
     return true;
 }
@@ -652,14 +755,25 @@ static bool loadSequence(const char* path) {
     FILE* f = std::fopen(path, "r");
     if (!f) return false;
     std::vector<Key> keys;
-    char line[512];
+    std::vector<Cue> cues;
+    char line[1024];
     while (std::fgets(line, sizeof line, f)) {
-        Key k;
-        if (std::sscanf(line, "%f %f %f %f %f %f", &k.t, &k.c.phi, &k.c.el, &k.c.dist, &k.c.roll, &k.c.fov) == 6) keys.push_back(k);
+        line[std::strcspn(line, "\r\n")] = 0;
+        Key k; Cue c; int n = 0;
+        if (std::sscanf(line, "cue %f %f %d %n", &c.t0, &c.t1, &c.style, &n) == 3 && n > 0) {
+            c.style = std::max(0, std::min(CUE_STYLES - 1, c.style));
+            c.text = line + n;
+            cues.push_back(c);
+        } else if (std::sscanf(line, "fade %f %f %f", &g_fadeIn, &g_fadeOut, &g_blackAt) == 3) {
+        } else if (std::sscanf(line, "%f %f %f %f %f %f %f %f %f", &k.t, &k.c.phi, &k.c.el, &k.c.dist, &k.c.roll, &k.c.fov,
+                               &k.c.yaw, &k.c.pitch, &k.c.fall) >= 6) {
+            keys.push_back(k);                     // old 6-column files keep yaw = pitch = fall = 0
+        }
     }
     std::fclose(f);
     if (keys.empty()) return false;
     g_keys = keys; sortKeys();
+    g_cues = cues;
     return true;
 }
 
@@ -690,6 +804,219 @@ static void grabCamera() {
     }
 }
 
+// camera velocity relative to the local free-falling observer, outward along r (units of c).
+// A hovering camera moves outward at beta = sqrt(r_s / r) relative to the falling one; |v| < 0.95 keeps
+// it a real observer, so near and inside the horizon the camera is forced into (almost) free fall.
+static float camRadialVel(float dist, float fall) {
+    float beta = std::sqrt(std::max(P.gravity, 0.0f) / std::max(MIN_DIST, dist));
+    return std::min(0.95f, (1.0f - fall) * beta);
+}
+
+// frequency shift the camera sees straight ahead (same maths as the shader), drives auto exposure
+static float viewShift(const CamState& c) {
+    CamFrame f = camBasis(c);
+    float r = len(f.pos);
+    V3 rh = f.pos * (1.0f / r);
+    float v = camRadialVel(r, f.fall), vv = v * v;
+    V3 V = rh * v, n = f.fwd * -1.0f;
+    float gam = 1.0f / std::sqrt(1.0f - vv), vn = dot(V, n);
+    V3 nf = (n + V * ((gam - 1.0f) * vn / std::max(vv, 1e-12f) + gam)) * (1.0f / (gam * (1.0f + vn)));
+    float beta = std::sqrt(std::max(P.gravity, 0.0f) / r);
+    float eInf = 1.0f + beta * dot(norm(nf) * -1.0f, rh);
+    return 1.0f / (gam * (1.0f + vn) * std::max(eInf, 0.05f));
+}
+// a real camera stops down when everything ahead is blueshifted and bright
+static float autoExposure(const CamState& c) {
+    float q = std::max(0.1f, std::min(10.0f, viewShift(c)));
+    return std::pow(q, -2.5f * P.autoExposure * P.obsShift);
+}
+
+// ============================================================================= film overlay
+// Titles, captions and the instrument readout are drawn with GDI into a DIB as white on black (the
+// brightness is the coverage), uploaded to a texture and laid over the graded picture by the composite.
+struct Overlay {
+    HDC dc = nullptr; HBITMAP bmp = nullptr; uint8_t* bits = nullptr;
+    int w = 0, h = 0;
+    HFONT font[CUE_STYLES] = {};
+    GLuint tex = 0;
+    std::string sig;
+    bool visible = false;
+};
+static Overlay g_ovView, g_ovExport;
+
+static std::wstring widen(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    std::wstring w(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
+    return w;
+}
+static float barHeight(int w, int h) { return g_letterboxOn ? std::max(0.0f, (h - w / g_letterbox) * 0.5f) : 0.0f; }
+
+static void overlayFree(Overlay& o) {
+    for (auto& f : o.font) if (f) { DeleteObject(f); f = nullptr; }
+    if (o.dc) { DeleteDC(o.dc); o.dc = nullptr; }
+    if (o.bmp) { DeleteObject(o.bmp); o.bmp = nullptr; }
+    if (o.tex) { glDeleteTextures(1, &o.tex); o.tex = 0; }
+    o.w = o.h = 0; o.sig.clear(); o.visible = false;
+}
+
+static void overlayResize(Overlay& o, int w, int h) {
+    if (o.dc && o.w == w && o.h == h) return;
+    overlayFree(o);
+    o.w = w; o.h = h;
+    o.dc = CreateCompatibleDC(nullptr);
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+    bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h;          // top-down rows
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    o.bmp = CreateDIBSection(o.dc, &bi, DIB_RGB_COLORS, (void**)&o.bits, nullptr, 0);
+    SelectObject(o.dc, o.bmp);
+    SetBkMode(o.dc, TRANSPARENT);
+
+    float s = std::min(h / 1080.0f, w / 1920.0f);
+    auto mk = [&](float px, int weight, const wchar_t* face) {
+        return CreateFontW(-(int)std::max(6.0f, px * s), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
+                           CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, face);
+    };
+    o.font[CUE_TITLE]    = mk(112, FW_LIGHT,  L"Segoe UI Light");
+    o.font[CUE_SUBTITLE] = mk(32,  FW_LIGHT,  L"Segoe UI Light");
+    o.font[CUE_CAPTION]  = mk(30,  FW_NORMAL, L"Segoe UI Semilight");
+    o.font[CUE_CHAPTER]  = mk(24,  FW_SEMIBOLD, L"Segoe UI Semibold");
+    o.font[CUE_HUD]      = mk(20,  FW_NORMAL, L"Consolas");
+
+    glGenTextures(1, &o.tex);
+    glBindTexture(GL_TEXTURE_2D, o.tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, K_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, K_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, K_CLAMP_TO_EDGE);
+}
+
+static std::string fmt(const char* f, double a, double b = 0, double c = 0) {
+    char buf[128]; std::snprintf(buf, sizeof buf, f, a, b, c); return buf;
+}
+static std::string fmtDuration(double s) {
+    if (s < 1.0)    return fmt("%.2f s", s);
+    if (s < 60.0)   return fmt("%.1f s", s);
+    if (s < 3600.0) return fmt("%.0f min %02.0f s", std::floor(s / 60), std::fmod(s, 60.0));
+    if (s < 86400.0 * 2) return fmt("%.0f h %02.0f min", std::floor(s / 3600), std::floor(std::fmod(s, 3600.0) / 60));
+    return fmt("%.1f days", s / 86400.0);
+}
+
+// instrument readout for a camera, in real units for a black hole of g_massSun suns
+static std::vector<std::pair<std::string, std::string>> hudLines(const CamState& c) {
+    std::vector<std::pair<std::string, std::string>> L;
+    double r    = std::max(MIN_DIST, c.dist);
+    double rsM  = 2953.25 * g_massSun;                  // Schwarzschild radius, metres
+    double rsC  = rsM / 299792458.0;                    // light crossing time, seconds
+    double beta = std::sqrt(1.0 / r);
+    double au   = r * rsM / 1.495978707e11;
+    L.push_back({"DISTANCE", au > 0.05 ? fmt("%.2f r_s   %.2f AU", r, au) : fmt("%.3f r_s   %.0f km", r, r * rsM / 1000.0)});
+    if (r > 1.0005) {
+        double v    = camRadialVel((float)r, c.fall);
+        double vrel = (v - beta) / (1.0 - v * beta);    // relative to an observer hovering here
+        double gam  = 1.0 / std::sqrt(1.0 - vrel * vrel);
+        L.push_back({"VELOCITY", std::fabs(vrel) < 1e-3 ? std::string("hovering") : fmt("%.3f c inward", -vrel)});
+        L.push_back({"CLOCKS", fmt("1 s here = %.3f s far away", gam / std::sqrt(1.0 - 1.0 / r))});
+    } else {
+        L.push_back({"VELOCITY", "no observer can stand still here"});
+        L.push_back({"CLOCKS", "outside time no longer reaches us"});
+    }
+    double tide = 299792458.0 * 299792458.0 * 2.0 / (rsM * rsM * r * r * r) / 9.81;   // head-to-toe, 2 m
+    L.push_back({"TIDES", tide < 0.01 ? fmt("%.1e g head to toe", tide) : fmt("%.2f g head to toe", tide)});
+    if (c.fall > 0.5) L.push_back({"SINGULARITY", "in " + fmtDuration(2.0 / 3.0 * std::pow(r, 1.5) * rsC) + " of our time"});
+    return L;
+}
+
+// draws the cues visible at sequence time t; only redraws and uploads when something changed
+static void overlayUpdate(Overlay& o, int w, int h, float t, bool film) {
+    overlayResize(o, w, h);
+    struct Item { int style; float a; std::string text; };
+    std::vector<Item> items;
+    std::vector<std::pair<std::string, std::string>> hud;
+    std::string sig;
+    if (film && g_cuesOn) {
+        for (auto& c : g_cues) {
+            float fd = (c.style == CUE_TITLE || c.style == CUE_SUBTITLE) ? 1.5f : 0.7f;
+            float a  = smoothstepf(c.t0, c.t0 + fd, t) * smoothstepf(c.t1, c.t1 - fd, t);
+            if (a < 0.004f) continue;
+            a = std::floor(a * 128.0f) / 128.0f;
+            items.push_back({c.style, a, c.text});
+            sig += std::to_string(c.style) + fmt(" %.3f|", a) + c.text;
+            if (c.style == CUE_HUD) {
+                hud = hudLines(evalSequence(t));
+                for (auto& l : hud) sig += l.second;
+            }
+        }
+    }
+    sig += fmt("%.3f %.0f", g_letterboxOn ? g_letterbox : 0.0f, g_massSun);
+    o.visible = !items.empty();
+    if (sig == o.sig) return;
+    o.sig = sig;
+    if (!o.visible) return;
+
+    std::memset(o.bits, 0, (size_t)w * h * 4);
+    float bar = barHeight(w, h), ph = h - 2 * bar;
+    auto draw = [&](int style, float a, RECT rc, UINT flags, const std::wstring& s, int spacing) {
+        int v = (int)(255.0f * std::min(1.0f, a) + 0.5f);
+        SelectObject(o.dc, o.font[style]);
+        SetTextCharacterExtra(o.dc, spacing);
+        SetTextColor(o.dc, RGB(v, v, v));
+        DrawTextW(o.dc, s.c_str(), -1, &rc, flags | DT_NOPREFIX);
+    };
+    auto drawCentered = [&](int style, float a, int cy, const std::wstring& s, int spacing) {
+        SelectObject(o.dc, o.font[style]);
+        SetTextCharacterExtra(o.dc, spacing);
+        SIZE sz; GetTextExtentPoint32W(o.dc, s.c_str(), (int)s.size(), &sz);
+        int x = (w - (sz.cx - spacing)) / 2;                    // the last letter's spacing is not ink
+        draw(style, a, {x, cy - sz.cy / 2, w, cy + sz.cy}, DT_LEFT | DT_SINGLELINE, s, spacing);
+    };
+    auto fontPx = [&](int style) { TEXTMETRICW tm; SelectObject(o.dc, o.font[style]); GetTextMetricsW(o.dc, &tm); return tm; };
+
+    for (auto& it : items) {
+        std::wstring s = widen(it.text);
+        TEXTMETRICW tm = fontPx(it.style);
+        int lh = tm.tmHeight;
+        switch (it.style) {
+        case CUE_TITLE: {
+            int sp = (int)(lh * 0.42f), cy = (int)(bar + ph * 0.44f);
+            drawCentered(it.style, it.a, cy, s, sp);
+        } break;
+        case CUE_SUBTITLE: {
+            int sp = (int)(lh * 0.18f), cy = (int)(bar + ph * 0.44f + fontPx(CUE_TITLE).tmHeight * 0.85f);
+            drawCentered(it.style, it.a * 0.85f, cy, s, sp);
+        } break;
+        case CUE_CAPTION: {
+            RECT rc = {(LONG)(w * 0.14f), 0, (LONG)(w * 0.86f), 0};
+            SelectObject(o.dc, o.font[it.style]); SetTextCharacterExtra(o.dc, 0);
+            DrawTextW(o.dc, s.c_str(), -1, &rc, DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+            int th = rc.bottom - rc.top;
+            int top = bar >= th + lh * 0.6f ? (int)(h - bar * 0.5f - th * 0.5f) : (int)(h - bar - ph * 0.07f - th);
+            rc.left = (LONG)(w * 0.14f); rc.right = (LONG)(w * 0.86f); rc.top = top; rc.bottom = top + th + 2;
+            draw(it.style, it.a, rc, DT_CENTER | DT_WORDBREAK, s, 0);
+        } break;
+        case CUE_CHAPTER: {
+            int x = (int)(w * 0.045f), y = (int)(bar + ph * 0.07f);
+            draw(it.style, it.a * 0.9f, {x, y, w, y + lh * 2}, DT_LEFT | DT_SINGLELINE, s, (int)(lh * 0.3f));
+        } break;
+        case CUE_HUD: {
+            int cw = tm.tmAveCharWidth, x = (int)(w * 0.045f);
+            int y = (int)(h - bar - ph * 0.07f - lh * 1.25f * hud.size());
+            for (auto& l : hud) {
+                draw(it.style, it.a * 0.5f, {x, y, w, y + lh * 2}, DT_LEFT | DT_SINGLELINE, widen(l.first), 0);
+                draw(it.style, it.a * 0.95f, {x + cw * 13, y, w, y + lh * 2}, DT_LEFT | DT_SINGLELINE, widen(l.second), 0);
+                y += (int)(lh * 1.25f);
+            }
+        } break;
+        }
+    }
+    GdiFlush();
+    glBindTexture(GL_TEXTURE_2D, o.tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, 0x80E1 /* GL_BGRA */, GL_UNSIGNED_BYTE, o.bits);
+}
+
 // ============================================================================= renderer
 static GLuint g_progScene, g_progDown, g_progUp, g_progComp, g_progCopy;
 
@@ -705,6 +1032,9 @@ static void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx
     u3f(p, "uCamUp", cf.up.x, cf.up.y, cf.up.z);
     u1f(p, "uFov", cf.fov);
     u1f(p, "uStep", step);
+    V3 vel = norm(cf.pos) * camRadialVel(len(cf.pos), cf.fall);
+    u3f(p, "uCamVel", vel.x, vel.y, vel.z);
+    u1f(p, "uObsShift", P.obsShift);
     u1f(p, "uGravity", P.gravity);
     u1f(p, "uDiskOn", P.disk ? 1.0f : 0.0f);
     u1f(p, "uDiskIn", P.diskIn);
@@ -751,19 +1081,24 @@ static void runBloom(const Target& src, std::vector<Target>& mips) {
     glDisable(GL_BLEND);
 }
 
-static void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<Target>& mips, float t, float fade) {
+static void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<Target>& mips, float t, float fade,
+                      const Overlay& ov, float exposure) {
     p_glBindFramebuffer(K_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
     GLuint p = g_progComp;
     p_glUseProgram(p);
     bindTex(0, scene.tex);
     bindTex(1, mips.empty() ? scene.tex : mips[0].tex);
+    bindTex(2, ov.tex ? ov.tex : scene.tex);
     u1i(p, "uScene", 0);
     u1i(p, "uBloom", 1);
+    u1i(p, "uOverlay", 2);
+    u1f(p, "uOverlayOn", ov.visible && ov.tex ? 1.0f : 0.0f);
+    u1f(p, "uBar", barHeight(w, h));
     u2f(p, "uRes", (float)w, (float)h);
     u1f(p, "uTime", t);
     u1f(p, "uBloomStr", P.bloom);
-    u1f(p, "uExposure", P.exposure);
+    u1f(p, "uExposure", exposure);
     u1f(p, "uVignette", P.vignette);
     u1f(p, "uCA", P.ca);
     u1f(p, "uGrain", P.grain);
@@ -789,7 +1124,7 @@ struct ExportJob {
     float shutter = 0.5f, step = 0.012f;
     HANDLE pipe = nullptr, proc = nullptr;
     std::string out, folder;
-    CamState shotCam; float shotTime = 0, shotFade = 1;
+    CamState shotCam; float shotTime = 0, shotFade = 1; bool shotSeq = false;
     LARGE_INTEGER t0;
     Target scene, accum, out8;
     std::vector<Target> mips;
@@ -803,6 +1138,7 @@ static char  g_exPath[260] = "gargantua.mp4";
 static char  g_ffmpeg[260] = "ffmpeg";
 static char  g_seqPath[260] = "sequence.txt";
 static std::string g_status;
+static std::string g_stillName;          // fixed screenshot file name (used by --stills)
 static const int RES_W[] = {1280, 1920, 2560, 3840}, RES_H[] = {720, 1080, 1440, 2160};
 static const int FPS_V[] = {24, 30, 60};
 static const int TILE = 256;
@@ -868,12 +1204,15 @@ static void beginExport(bool screenshot) {
     j.shutter = screenshot ? 0.0f : g_exShutter;
     j.step = g_exUltra ? 0.012f : 0.03f;
     j.total = screenshot ? 1 : std::max(1, (int)std::ceil(seqLength() * j.fps));
-    if (screenshot) { j.shotCam = currentCam(); j.shotTime = currentTime(); j.shotFade = 1.0f; }
+    if (screenshot) {
+        j.shotCam = currentCam(); j.shotTime = currentTime();
+        j.shotSeq = g_camMode == CAM_SEQUENCE; j.shotFade = currentFade();
+    }
 
     char sz[64]; std::snprintf(sz, sizeof sz, "%dx%d", j.W, j.H);
     std::string args;
     if (screenshot) {
-        j.out = "gargantua_" + timestamp() + ".png";
+        j.out = g_stillName.empty() ? "gargantua_" + timestamp() + ".png" : g_stillName + ".png";
         args = std::string("-y -loglevel error -f rawvideo -pix_fmt rgb24 -s ") + sz + " -i - -frames:v 1 \"" + j.out + "\"";
     } else {
         j.out = g_exPath;
@@ -882,7 +1221,7 @@ static void beginExport(bool screenshot) {
     }
     j.useFfmpeg = startFfmpeg(args);
     if (!j.useFfmpeg) {
-        if (screenshot) j.out = "gargantua_" + timestamp() + ".bmp";
+        if (screenshot) j.out = g_stillName.empty() ? "gargantua_" + timestamp() + ".bmp" : g_stillName + ".bmp";
         else { j.folder = "frames_" + timestamp(); CreateDirectoryA(j.folder.c_str(), nullptr); }
     }
 
@@ -903,6 +1242,7 @@ static void endExport(bool cancelled) {
     freeTarget(j.scene); freeTarget(j.accum); freeTarget(j.out8);
     for (auto& m : j.mips) freeTarget(m);
     j.mips.clear();
+    overlayFree(g_ovExport);
     j.active = false;
     char b[512];
     if (cancelled) std::snprintf(b, sizeof b, "Cancelled after %d frames.", j.frame);
@@ -916,9 +1256,11 @@ static void endExport(bool cancelled) {
 static void finishFrame() {
     ExportJob& j = g_job;
     float ft   = j.screenshot ? j.shotTime : j.frame / (float)j.fps;
-    float fade = j.screenshot ? 1.0f : seqFade(ft);
+    float fade = j.screenshot ? j.shotFade : seqFade(ft);
     runBloom(j.accum, j.mips);
-    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade);
+    overlayUpdate(g_ovExport, j.W, j.H, ft, !j.screenshot || j.shotSeq);
+    float ex = P.exposure * autoExposure(j.screenshot ? j.shotCam : evalSequence(ft));
+    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade, g_ovExport, ex);
     j.haveFrame = true;
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -1064,9 +1406,14 @@ static void drawUI(float fps, int rw, int rh) {
             float wrapped = std::remainder(g_orbit.phi, 2 * PI);
             if (ImGui::SliderAngle("Azimuth", &wrapped, -180, 180)) g_orbit.phi = wrapped;
             ImGui::SliderAngle("Elevation", &g_orbit.el, -88, 88);
-            ImGui::SliderFloat("Distance", &g_orbit.dist, 2.0f, 200.0f, "%.1f r_s", ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Distance", &g_orbit.dist, MIN_DIST, 300.0f, "%.2f r_s", ImGuiSliderFlags_Logarithmic);
             ImGui::SliderAngle("Roll", &g_orbit.roll, -60, 60);
             fovSlider("Field of view", &g_orbit.fov);
+            ImGui::SliderAngle("Look yaw", &g_orbit.yaw, -180, 180);
+            ImGui::SliderAngle("Look pitch", &g_orbit.pitch, -89, 89);
+            ImGui::SliderFloat("Free fall", &g_orbit.fall, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = hovering on rockets, 1 = falling freely from far away.\n"
+                                                          "Near and inside the horizon nothing can hover, so the camera falls anyway.");
             ImGui::TextDisabled("Drag the viewport to orbit, wheel to zoom.");
         } else {
             ImGui::TextDisabled("Grabbing the view switches to free orbit.");
@@ -1088,6 +1435,10 @@ static void drawUI(float fps, int rw, int rh) {
         ImGui::SliderFloat("Opacity", &P.diskOpacity, 0.0f, 5.0f);
         ImGui::SliderFloat("Swirl speed", &P.swirl, 0.0f, 4.0f);
         ImGui::SliderFloat("Photon glow", &P.glow, 0.0f, 0.04f, "%.3f");
+        ImGui::SliderFloat("Observer shift", &P.obsShift, 0.0f, 1.0f);
+        ImGui::SliderFloat("Auto exposure", &P.autoExposure, 0.0f, 1.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Doppler and gravitational shift caused by the camera's own motion and depth.\n"
+                                                      "Falling in, light ahead turns blue and bright, light behind turns red.");
         if (ImGui::Button("Physically based")) { P.doppler = 1; P.redshift = 1; P.tempPeak = 8000; P.diskBright = 1.25f; P.glow = 0.005f; }
         ImGui::SameLine();
         if (ImGui::Button("Interstellar look")) { P.doppler = 0; P.redshift = 0.3f; P.tempPeak = 5200; P.diskBright = 1.6f; P.glow = 0.008f; }
@@ -1130,8 +1481,12 @@ static void drawUI(float fps, int rw, int rh) {
         ImGui::SetNextItemWidth(90 * g_dpi);
         ImGui::SliderFloat("##speed", &g_playSpeed, 0.1f, 4.0f, "%.1fx speed");
         if (ImGui::SliderFloat("Playhead", &g_playhead, 0.0f, std::max(L, 0.01f), "%.2f s")) g_camMode = CAM_SEQUENCE;
+        ImGui::SetNextItemWidth(70 * g_dpi);
         ImGui::DragFloat("Fade in", &g_fadeIn, 0.05f, 0.0f, 10.0f, "%.1f s"); ImGui::SameLine();
-        ImGui::DragFloat("Fade out", &g_fadeOut, 0.05f, 0.0f, 10.0f, "%.1f s");
+        ImGui::SetNextItemWidth(70 * g_dpi);
+        ImGui::DragFloat("Fade out", &g_fadeOut, 0.05f, 0.0f, 10.0f, "%.2f s"); ImGui::SameLine();
+        ImGui::SetNextItemWidth(70 * g_dpi);
+        ImGui::DragFloat("Black at", &g_blackAt, 0.1f, 0.0f, 600.0f, g_blackAt > 0 ? "%.1f s" : "end");
 
         if (ImGui::Button("Add key at playhead (current view)")) { addKey(g_playhead, currentCam()); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame a shot in free orbit, move the playhead, click.");
@@ -1154,7 +1509,8 @@ static void drawUI(float fps, int rw, int rh) {
                 ImGui::DragFloat("##t", &k.t, 0.05f, 0.0f, 600.0f, "%.2f");
                 if (ImGui::IsItemDeactivatedAfterEdit()) resort = true;
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("r %.0f  el %.0f  fov %.0f", k.c.dist, k.c.el * 180 / PI, 2 * std::atan(k.c.fov) * 180 / PI);
+                ImGui::Text("r %.2f  el %.0f  fov %.0f%s", k.c.dist, k.c.el * 180 / PI, 2 * std::atan(k.c.fov) * 180 / PI,
+                            k.c.fall > 0.5f ? "  falling" : "");
                 ImGui::TableSetColumnIndex(2);
                 if (ImGui::SmallButton("Go")) { g_playhead = k.t; g_camMode = CAM_SEQUENCE; g_playing = false; }
                 ImGui::SameLine();
@@ -1173,7 +1529,38 @@ static void drawUI(float fps, int rw, int rh) {
         ImGui::SameLine();
         if (ImGui::Button("Load")) g_status = loadSequence(g_seqPath) ? "Sequence loaded." : "Could not load sequence.";
         ImGui::SameLine();
-        if (ImGui::Button("Default")) defaultSequence();
+        if (ImGui::Button("Default film")) defaultSequence();
+    }
+
+    // ---------------------------------------------------------------- film
+    if (ImGui::CollapsingHeader("Film")) {
+        ImGui::Checkbox("Letterbox", &g_letterboxOn); ImGui::SameLine();
+        ImGui::SetNextItemWidth(120 * g_dpi);
+        ImGui::SliderFloat("##aspect", &g_letterbox, 1.78f, 2.76f, "%.2f : 1");
+        ImGui::Checkbox("Titles, captions & HUD", &g_cuesOn);
+        ImGui::SliderFloat("Mass (suns)", &g_massSun, 5.0f, 1.0e10f, "%.3g", ImGuiSliderFlags_Logarithmic);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only changes the real-world units in the HUD.\n"
+                                                      "Small black holes have deadly tides at the horizon, big ones gentle.");
+        if (ImGui::TreeNode("Cues", "Cues (%d)", (int)g_cues.size())) {
+            static const char* styles = "Title\0Subtitle\0Caption\0Chapter\0HUD\0";
+            int del = -1;
+            for (int i = 0; i < (int)g_cues.size(); i++) {
+                Cue& c = g_cues[i];
+                ImGui::PushID(i);
+                ImGui::SetNextItemWidth(110 * g_dpi);
+                ImGui::DragFloatRange2("##t", &c.t0, &c.t1, 0.05f, 0.0f, 600.0f, "%.1f", "%.1f"); ImGui::SameLine();
+                ImGui::SetNextItemWidth(80 * g_dpi);
+                ImGui::Combo("##s", &c.style, styles); ImGui::SameLine();
+                if (ImGui::SmallButton("x")) del = i;
+                char buf[512]; std::snprintf(buf, sizeof buf, "%s", c.text.c_str());
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::InputText("##text", buf, sizeof buf)) c.text = buf;
+                ImGui::PopID();
+            }
+            if (del >= 0) g_cues.erase(g_cues.begin() + del);
+            if (ImGui::Button("Add caption at playhead")) g_cues.push_back({g_playhead, g_playhead + 6.0f, CUE_CAPTION, "New caption"});
+            ImGui::TreePop();
+        }
     }
 
     // ---------------------------------------------------------------- export
@@ -1259,7 +1646,7 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_MOUSEWHEEL:
         if (uiMouse || g_job.active) break;
         grabCamera();
-        g_orbit.dist = std::max(2.0f, std::min(200.0f, g_orbit.dist * std::pow(0.9f, GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA)));
+        g_orbit.dist = std::max(MIN_DIST, std::min(300.0f, g_orbit.dist * std::pow(0.9f, GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA)));
         return 0;
     }
     return DefWindowProcA(h, m, wp, lp);
@@ -1269,6 +1656,18 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 int main() {
     ImGui_ImplWin32_EnableDpiAwareness();
     defaultSequence();
+
+    // --stills t1,t2,...  [--res 0..3] [--samples n]: save screenshots of the film at those times, then quit
+    std::vector<float> stills;
+    for (int i = 1; i < __argc; i++) {
+        std::string a = __argv[i];
+        if (a == "--stills" && i + 1 < __argc) {
+            for (char* tok = std::strtok(__argv[++i], ","); tok; tok = std::strtok(nullptr, ",")) stills.push_back((float)std::atof(tok));
+        } else if (a == "--res" && i + 1 < __argc) g_exRes = std::max(0, std::min(3, std::atoi(__argv[++i])));
+        else if (a == "--samples" && i + 1 < __argc) g_exSamples = std::max(1, std::atoi(__argv[++i]));
+        else if (a == "--sequence" && i + 1 < __argc) loadSequence(__argv[++i]);
+    }
+    size_t stillNext = 0;
 
     HINSTANCE inst = GetModuleHandleA(nullptr);
     WNDCLASSA wc = {};
@@ -1331,6 +1730,15 @@ int main() {
         prev = now;
         fps = fps * 0.95f + (1.0f / std::max(dt, 1e-4f)) * 0.05f;
 
+        if (!stills.empty() && !g_job.active) {
+            if (stillNext == stills.size()) break;
+            g_camMode = CAM_SEQUENCE; g_playing = false;
+            g_playhead = stills[stillNext++];
+            g_stillName = fmt("still_%06.2f", g_playhead);
+            g_exUltra = true;
+            beginExport(true);
+        }
+
         // ---- advance time
         if (!g_job.active) {
             if (!g_paused) g_simTime += dt;
@@ -1376,7 +1784,9 @@ int main() {
             setSceneUniforms(scene.w, scene.h, camBasis(currentCam()), currentTime(), 0, 0, P.ultra ? 0.012f : 0.03f);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             runBloom(scene, mips);
-            composite(0, g_w, g_h, scene, mips, currentTime(), currentFade());
+            overlayUpdate(g_ovView, g_w, g_h, g_playhead, g_camMode == CAM_SEQUENCE);
+            composite(0, g_w, g_h, scene, mips, currentTime(), currentFade(), g_ovView,
+                      P.exposure * autoExposure(currentCam()));
         }
 
         ImGui::Render();

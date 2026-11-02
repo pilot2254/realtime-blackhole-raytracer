@@ -1,23 +1,37 @@
 **For video export, install ffmpeg** (`winget install ffmpeg`). Frames get piped straight into an H.264 MP4. Without ffmpeg, it writes BMP frames instead.
 
-**The default animation (70 seconds)**
+**The film: GARGANTUA (3 min 6 s)**
 
-The app starts by playing it in a loop:
-1. Fade in from deep space, with stars already warping around a tiny black hole.
-2. Approach into the classic edge-on view.
-3. Rise to a top-down shot of the whole swirling disk.
-4. Swing around until the distant spiral galaxy is exactly behind the hole. Gravity bends the galaxy into a complete **Einstein ring** (bottom right of the preview).
-5. Dive in and skim over the disk at 8 r_s.
-6. Pull back out into space and fade out.
+The app starts by playing it in a loop, letterboxed to 2.39:1 with titles, chapter cards and captions:
+1. **The shadow.** Title card over deep space, where a tiny black hole bends the stars. Then the approach into the classic edge-on view.
+2. **The whirlpool.** Rise to a top-down shot of the whole swirling disk.
+3. **The ring.** A distant spiral galaxy lines up exactly behind the hole, and gravity bends it into a complete **Einstein ring**.
+4. **The disk.** Descend to skim just above the disk, looking ahead as the gas streams past. An instrument HUD fades in.
+5. **The fall.** Turn to face the hole and let go. Free fall through the photon sphere, across the event horizon, and on toward the singularity. At the end, the universe is squeezed into one thin band of light. Cut to black, then the end card.
+
+**The physics of the fall**
+
+The camera is a free-falling observer. Inside the horizon, a hovering ("static") camera can't exist, so the ray tracer works in the free-falling frame instead (Painlevé–Gullstrand coordinates). In that frame space is flat, and a light ray's path is its local direction plus the fall velocity √(r_s/r). The maths is exact at every radius, including inside the horizon. What you see along the way:
+- **Aberration:** the view ahead is squeezed and brightened.
+- **Your own Doppler and gravitational shift:** light ahead turns blue, light behind turns red.
+- **A black cone:** inside the horizon, light from straight "below" can't have come from our universe.
+
+The HUD shows the real numbers for a 100 million solar-mass black hole: distance, speed relative to a hovering observer, clock rate compared to far away, head-to-toe tides, and the proper time left before the singularity.
 
 **What the UI controls**
 
-- **Camera:** Free orbit or sequence playback. If you drag the viewport during playback, it switches to free orbit and keeps the exact current view.
-- **Physics:** A **gravity slider** (at 0, light travels straight and you see the flat disk, as in the last preview frame; at 2, lensing is exaggerated), Doppler and redshift strength, disk radii, temperature, brightness, opacity, and swirl speed. There are also presets: "Physically based" and "Interstellar look" (the film turned the Doppler effect off).
+- **Camera:** Free orbit or sequence playback. Free orbit has look yaw/pitch (to look away from the hole) and a **free fall** slider (0 = hovering on rockets, 1 = falling from far away). If you drag the viewport during playback, it switches to free orbit and keeps the exact current view.
+- **Physics:** A **gravity slider** (at 0, light travels straight; at 2, lensing is exaggerated), plus Doppler and redshift strength, disk radii, temperature, brightness, opacity, and swirl speed.
+  - **Observer shift** controls the camera's own blue/redshift.
+  - **Auto exposure** stops the lens down when everything ahead is blueshifted.
+  - Presets: "Physically based" and "Interstellar look" (the film turned the Doppler effect off).
 - **Sky / Post:** Separate strength sliders for each sky layer. Exposure, bloom, vignette, chromatic aberration, and grain.
-- **Sequencer:** To make your own shot, frame it in free orbit, move the playhead, and click "Add key". Keys can be retimed, jumped to, overwritten, or deleted, and the sequence saves to and loads from `sequence.txt`. The camera moves along smooth spline curves between keys.
-- **Render video:** 720p up to 4K, at 24, 30, or 60 fps. "Samples / frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing.
+- **Sequencer:** To make your own shot, frame it in free orbit, move the playhead, and click "Add key". Keys can be retimed, jumped to, overwritten, or deleted. The camera moves along smooth spline curves between keys. "Black at" sets when the picture cuts to black. The sequence, with its cues, saves to and loads from `sequence.txt`.
+- **Film:** Letterbox on/off and its aspect ratio. Titles/captions/HUD on/off. The black hole mass used for the HUD's real-world units. A cue editor for every title, chapter card, caption and HUD timing.
+- **Render video:** 720p up to 4K, at 24, 30, or 60 fps. "Samples / frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
   - Rendering is split into tiles, so heavy 4K frames won't crash your GPU driver, and the UI stays responsive with a progress bar and an estimated time remaining.
   - There's also a one-click **Screenshot** of the current view at export resolution.
 
-**Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That takes a while (4,200 frames × 16 samples), so try a 720p render with 4 samples first to check the timing.
+**Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That's 11,160 frames × 16 samples, so try a 720p render with 4 samples first to check the timing.
+
+**Stills from the command line:** `gargantua_gl.exe --stills 30,72,163 --res 1 --samples 8` saves `still_<time>.png` for each film time and quits (`--res` 0–3 = 720p…4K, `--sequence file.txt` to use your own sequence).
