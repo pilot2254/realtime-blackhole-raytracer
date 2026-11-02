@@ -62,7 +62,7 @@ void defaultSequence() {
         {186.0f, { 6.00f,  0.37f,   0.75f, 0.08f, 0.65f,  1.05f,  0.10f, 1.0f}},
         {194.0f, { 6.03f,  0.38f,   0.50f, 0.02f, 0.70f,  1.65f,  0.10f, 1.0f}},  // turn to the band of sky
         {201.0f, { 6.05f,  0.38f,   0.32f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // nearing the inner horizon
-        {212.0f, { 6.05f,  0.38f,   0.32f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // end card on black
+        {238.0f, { 6.05f,  0.38f,   0.32f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // end credits on black
     };
     g_cues = {
         {  2.5f,  11.0f, CUE_TITLE,    "GARGANTUA"},
@@ -96,6 +96,13 @@ void defaultSequence() {
         {193.5f, 200.0f, CUE_CAPTION,  "What lies beyond it, no theory can yet tell us."},
         {203.0f, 211.0f, CUE_TITLE,    "GARGANTUA"},
         {203.5f, 211.0f, CUE_SUBTITLE, "every pixel is a ray of light traced through curved spacetime"},
+        // end credits: subtitle cards, '|' breaks lines and the first line is the heading
+        {212.5f, 220.0f, CUE_SUBTITLE, "MADE OF NOTHING BUT MATHEMATICS | written in C++ and OpenGL, computed live on the GPU"
+                                       " | no game engine · no textures · no 3D models · no recorded sound"},
+        {221.0f, 228.5f, CUE_SUBTITLE, "THE PHYSICS | light traced backwards through the spacetime of a spinning black hole"
+                                       " | Kerr geometry · Doppler beaming · gravitational redshift · frame dragging"},
+        {229.5f, 237.0f, CUE_SUBTITLE, "CREATED BY | Michal Flaška, with Claude by Anthropic"
+                                       " | inspired by Interstellar and the science of Kip Thorne"},
     };
     g_fadeIn = 3.0f; g_fadeOut = 0.25f; g_blackAt = 201.0f;
 }

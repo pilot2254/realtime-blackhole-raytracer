@@ -22,20 +22,24 @@ SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     CamFrame cf = camBasis(c);
     for (const SceneObject& o : g_objects) {
         if (!objectActive(o, t, film) || (o.type != SO_SHIP && o.type != SO_PLANET)) continue;
-        float d = len(objectPosition(o, t, film) - cf.pos) - o.size;
-        if (o.type == SO_SHIP)   s.hum   = std::max(s.hum, smoothstepf(4.0f, 0.6f, d));
-        if (o.type == SO_PLANET) s.ocean = std::max(s.ocean, smoothstepf(3.5f, 0.8f, d));
+        float d = len(objectPosition(o, t, film) - cf.pos) - o.size, pr = objectPresence(o, t, film);
+        if (o.type == SO_SHIP)   s.hum   = std::max(s.hum, pr * smoothstepf(4.0f, 0.6f, d));
+        if (o.type == SO_PLANET) s.ocean = std::max(s.ocean, pr * smoothstepf(3.5f, 0.8f, d));
     }
     return s;
 }
 
 // After the cut to black the picture is gone but the music is not: the camera's state is held at the
-// cut, the effects stop, and the organ resolves home and dies away in the hall over the end card.
+// cut, the effects stop, and the organ resolves home and dies away in the hall over the end credits.
+// The music only follows the picture's fade-in; the picture's fade-out to the cut must not dip it, or the
+// organ would stop at the cut and swell back for the coda.
 SoundControls filmSound(float t) {
     float L = seqLength(), cut = g_blackAt > 0.0f ? std::min(g_blackAt, L) : L;
-    if (t < cut) return soundControls(evalSequence(t), seqFade(t), t, true);
+    float fadeIn = g_fadeIn > 0.0f ? smoothstepf(0.0f, g_fadeIn, t) : 1.0f;
+    if (t < cut) return soundControls(evalSequence(t), cut < L ? fadeIn : seqFade(t), t, true);   // no credits: fade with it
     SoundControls s = soundControls(evalSequence(cut - 0.01f), 1.0f, cut, true);
-    s.level = std::exp(-(t - cut) / 3.2f);
+    float tail = std::max(1.0f, L - cut);                    // the credits' length: ring out across all of it
+    s.level = std::exp(-(t - cut) / (0.45f * tail)) * smoothstepf(L, L - std::min(6.0f, 0.5f * tail), t);
     s.coda = 1.0f;
     s.tension = 0.45f;
     s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f;

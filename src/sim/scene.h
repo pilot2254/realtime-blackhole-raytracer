@@ -32,6 +32,7 @@ extern CamState (*g_filmCameraAt)(float t);     // the film's camera path, set b
 const char* objectTypeName(int type);
 SceneObject makeObject(int type);               // a sensible default of each kind
 bool  objectActive(const SceneObject& o, float t, bool film);
+float objectPresence(const SceneObject& o, float t, bool film);   // 0..1, fades in and out at the window's ends
 V3    objectPosition(const SceneObject& o, float t, bool film, V3* velocity = nullptr, V3* axis = nullptr);
 float orbitClockRate(float r);                  // circular-orbit time dilation (dt/dtau), < 0 if no such orbit
 uint64_t objectsHash();

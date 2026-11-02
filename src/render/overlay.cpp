@@ -166,8 +166,23 @@ void overlayUpdate(Overlay& o, int w, int h, float t, bool film) {
             drawCentered(it.style, it.a, cy, s, sp);
         } break;
         case CUE_SUBTITLE: {
-            int sp = (int)(lh * 0.18f), cy = (int)(bar + ph * 0.44f + fontPx(CUE_TITLE).tmHeight * 0.85f);
-            drawCentered(it.style, it.a * 0.85f, cy, s, sp);
+            // '|' breaks lines (credits). Under a title when one is up, otherwise centred on its own.
+            std::vector<std::wstring> lines;
+            for (size_t a = 0, b; a <= s.size(); a = b + 1) {
+                b = s.find(L'|', a); if (b == std::wstring::npos) b = s.size();
+                std::wstring l = s.substr(a, b - a);
+                while (!l.empty() && l.front() == L' ') l.erase(l.begin());
+                while (!l.empty() && l.back() == L' ') l.pop_back();
+                lines.push_back(l);
+            }
+            bool underTitle = false;
+            for (auto& o : items) underTitle |= o.style == CUE_TITLE;
+            int sp = (int)(lh * 0.18f), step = (int)(lh * 1.45f);
+            int cy = underTitle ? (int)(bar + ph * 0.44f + fontPx(CUE_TITLE).tmHeight * 0.85f)
+                                : (int)(bar + ph * 0.5f - step * (lines.size() - 1) * 0.5f);
+            for (size_t i = 0; i < lines.size(); i++, cy += step)
+                if (!lines[i].empty())                       // a card's first line is its heading
+                    drawCentered(it.style, it.a * (lines.size() == 1 ? 0.85f : i == 0 ? 1.0f : 0.62f), cy, lines[i], sp);
         } break;
         case CUE_CAPTION: {
             RECT rc = {(LONG)(w * 0.14f), 0, (LONG)(w * 0.86f), 0};

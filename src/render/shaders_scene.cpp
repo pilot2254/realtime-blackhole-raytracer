@@ -358,6 +358,7 @@ vec3 shadeShip(int i, vec3 hp, vec3 V) {
 }
 
 // adds glowing objects along the segment; returns true when an opaque object was hit (T becomes 0)
+// (a solid object fading in or out only dims T, and the ray goes on)
 bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
     vec3 d = b - a;
     float L2 = dot(d, d), best = 2.0;
@@ -380,7 +381,7 @@ bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
                 float D = mix(1.0, 1.0 / (gam * (1.0 - dot(beta, n))), uDoppler);
                 float g = mix(1.0, sqrt(max(1.0 - RS / max(length(c), 1.01), 0.0)), uRedshift);
                 float sh = D * g * qObs;
-                float em = exp(-dist2 / (R * R)) * sqrt(L2) / R * 0.35 * uObjB[i].z;
+                float em = exp(-dist2 / (R * R)) * sqrt(L2) / R * 0.35 * uObjB[i].z * uObjV[i].w;
                 col += T * blackbody(uObjB[i].y * sh) * em * min(sh * sh * sh * sh, 30.0);
             }
         } else if (type == 3) {
@@ -392,7 +393,7 @@ bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
                 float beta = uObjC[i].w, gam = inversesqrt(1.0 - beta * beta);
                 float D = 1.0 / (gam * (1.0 - beta * sign(mid.y) * n.y));
                 float em = exp(-rho2 / (w * w)) * smoothstep(1.0, 2.0, h) * exp(-h / (0.4 * len)) * sqrt(L2) / w;
-                col += T * blackbody(uObjB[i].y * D * qObs) * em * uObjB[i].z * 0.15 * min(D * D * D, 20.0);
+                col += T * blackbody(uObjB[i].y * D * qObs) * em * uObjB[i].z * uObjV[i].w * 0.15 * min(D * D * D, 20.0);
             }
         } else if (type == 1) {
             float s = segSphere(a, d, c, R);
@@ -406,7 +407,7 @@ bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
                 float h = (dist - R) / (0.035 * R);
                 float lit = smoothstep(-0.3, 0.6, dot(pc / dist, normalize(-c)));
                 float chord = min(sqrt(L2), 2.0 * sqrt(max(2.0 * R * (dist - R), 1e-6)) + 0.05 * R);
-                col += T * vec3(0.40, 0.58, 1.0) * exp(-h) * lit * chord / R * 0.9;
+                col += T * vec3(0.40, 0.58, 1.0) * exp(-h) * lit * chord / R * 0.9 * uObjV[i].w;
             }
         } else if (type == 2) {
             float s;
@@ -416,9 +417,11 @@ bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
     if (hit < 0) return false;
     vec3 hp = a + d * best;
     int type = int(uObjB[hit].x + 0.5);
-    col += T * (type == 1 ? shadePlanet(hit, hp, n) : shadeShip(hit, hp, n)) * min(qObs * qObs, 4.0);
-    T = 0.0;
-    return true;
+    // presence < 1 while an object fades in or out at the ends of its time window: partly see-through
+    float pr = uObjV[hit].w;
+    col += T * pr * (type == 1 ? shadePlanet(hit, hp, n) : shadeShip(hit, hp, n)) * min(qObs * qObs, 4.0);
+    T *= 1.0 - pr;
+    return T < 1e-3;
 }
 
 void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dirOut, out float escaped) {

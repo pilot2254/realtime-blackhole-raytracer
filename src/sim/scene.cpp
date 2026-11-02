@@ -1,4 +1,5 @@
 #include "sim/scene.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include "sim/params.h"
@@ -30,6 +31,12 @@ bool objectActive(const SceneObject& o, float t, bool film) {
     if (!o.visible) return false;
     return !film || o.t1 <= o.t0 || (t >= o.t0 && t <= o.t1);
 }
+float objectPresence(const SceneObject& o, float t, bool film) {
+    if (!objectActive(o, t, film)) return 0.0f;
+    if (!film || o.t1 <= o.t0) return 1.0f;
+    float f = std::min(2.0f, 0.25f * (o.t1 - o.t0));
+    return smoothstepf(o.t0, o.t0 + f, t) * smoothstepf(o.t1, o.t1 - f, t);
+}
 
 // circular orbit, tilted by 'incline' about the x axis; velocity is the physical (Keplerian) one, used for
 // the Doppler shift, while the cinematic angular speed is free
@@ -50,15 +57,17 @@ V3 objectPosition(const SceneObject& o, float t, bool film, V3* velocity, V3* ax
     }
     if (o.type == SO_SHIP && o.follow && g_filmCameraAt) {
         // the ship flies the film camera's own path through space, 'lead' seconds ahead of it. Entering its
-        // film window it comes from behind and overtakes; near the end it speeds off ahead. In the free
-        // camera it waits at the middle of its stretch of path.
+        // film window it comes from behind and overtakes; near the end it pulls ahead and climbs away out of
+        // the top of the frame, so it is gone before its window closes. In the free camera it waits at the
+        // middle of its stretch of path.
         bool window = o.t1 > o.t0;
         float tt = film || !window ? t : 0.5f * (o.t0 + o.t1);
-        float lead = o.offset.x;
+        float lead = o.offset.x, climb = 0.0f;
         if (film && window) {
             float in  = smoothstepf(o.t0, o.t0 + 7.0f, t);
-            float out = smoothstepf(o.t1 - 7.0f, o.t1, t);
-            lead = -2.5f + (o.offset.x + 2.5f) * in + 6.0f * out * out;
+            float out = smoothstepf(o.t1 - 9.0f, o.t1 - 1.0f, t);
+            lead  = -2.5f + (o.offset.x + 2.5f) * in + 2.5f * out;
+            climb = 4.0f * out * out;
         }
         float tp = tt + lead;
         V3 P = pathPos(tp);
@@ -66,8 +75,8 @@ V3 objectPosition(const SceneObject& o, float t, bool film, V3* velocity, V3* ax
         V3 U = norm(V3{0, 1, 0} - T * T.y);
         V3 R = cross(T, U);                                  // toward the hole while the path orbits it
         if (velocity) *velocity = {0, 0, 0};
-        if (axis) *axis = T;
-        return P + R * o.offset.y + U * o.offset.z;
+        if (axis) *axis = norm(T + U * (climb > 0.0f ? 0.6f * std::sqrt(climb / 4.0f) : 0.0f));   // nose up as it climbs
+        return P + R * o.offset.y + U * (o.offset.z + climb);
     }
     float phi = o.phase + o.speed * t;
     V3 p = orbitPoint(o.orbitR, phi, o.incline);
@@ -108,6 +117,7 @@ int gatherObjects(float t, bool film, ObjectGPU out[MAX_OBJECTS]) {
         g.a[0] = p.x; g.a[1] = p.y; g.a[2] = p.z; g.a[3] = o.size;
         g.b[0] = (float)o.type; g.b[1] = o.temp; g.b[2] = o.bright; g.b[3] = o.type == SO_JET ? o.orbitR : o.spin * t;
         g.c[0] = o.color.x; g.c[1] = o.color.y; g.c[2] = o.color.z; g.c[3] = o.type == SO_JET ? o.spin : 0.0f;
+        g.v[3] = objectPresence(o, t, film);
         if (o.type == SO_HOTSPOT) { g.v[0] = vel.x; g.v[1] = vel.y; g.v[2] = vel.z; }
         else                      { g.v[0] = axis.x; g.v[1] = axis.y; g.v[2] = axis.z; }
     }

@@ -139,7 +139,7 @@ Letterboxed to 2.39:1, with titles, chapter cards and captions:
 3. **The ring.** A galaxy lines up exactly behind the hole, and gravity bends it into a complete **Einstein ring**. Then the view fades into what the **Event Horizon Telescope** would see.
 4. **The disk.** Skim just above the disk as the **Endurance** overtakes the camera. An instrument HUD fades in.
 5. **Miller's planet.** An ocean world on the closest stable orbit, lit by the disk. At this spin an hour there lasts about an hour and a half far away. *Interstellar*'s seven years needs a black hole spinning within a hundred-trillionth of the limit.
-6. **The fall.** Let go: free fall past the photon orbits, through the ergosphere, across the event horizon, toward the inner horizon. Cut to black, and the music rings out over the end card.
+6. **The fall.** Let go: free fall past the photon orbits, through the ergosphere, across the event horizon, toward the inner horizon. Cut to black, and the music rings out over the end credits.
 
 ## Scene objects
 
