@@ -1,154 +1,192 @@
 # Gargantua Studio
 
-A real-time black hole ray tracer for Windows, written in C++ with OpenGL and Dear ImGui. Every pixel follows a ray of light through curved spacetime, so the lensing, the lopsided shadow, the Einstein ring and the view from inside the horizon all come out of the maths. There are no textures or tricks. It comes with an Unreal-style editor, a camera sequencer, and a short film, **GARGANTUA**, that orbits the black hole, skims its disk and falls in.
+A real-time black hole ray tracer for Windows, written in C++ with OpenGL and Dear ImGui. Every pixel follows a ray of light through curved spacetime, so the lensing, the lopsided shadow, the Einstein ring and the view from inside the horizon all come out of the maths. There are no textures or fakes. It comes with an Unreal-style editor, a camera sequencer, a physics-driven soundtrack, and a short film, **GARGANTUA**, that orbits the black hole, skims its disk, passes Miller's planet and falls in.
 
-![Gargantua, edge-on](showcase/gargantua_20261102_134653.png)
+**The editor**:
+
+![Editor](showcase/editor.png)
 
 ## How this was made
 
 This project is mostly AI-generated. This morning I decided to test what Claude can do and see how good it is with math, and to compare it with how good it was a few years ago. I was blown away by the results, so I decided to publish it. My earlier Claude benchmark projects are in [cpp_projects/claude-test](https://github.com/pilot2254/cpp_projects/blob/main/claude-test/).
 
-The images below were rendered with the app.
+Every image here was rendered by the app: most of them by me while playing with the editor, and the film storyboard and the features sheet by Claude.
 
 ## Gallery
 
+![Gallery](showcase/collage_gallery.jpg)
+
 | | |
 | --- | --- |
-| ![Edge-on view](showcase/gargantua_20261102_134653.png) | ![Inside the fall](showcase/gargantua_20261102_143630.png) |
-| The classic edge-on shot: the far side of the disk is bent over and under the shadow. | Falling toward the horizon: the disk's light wraps around the shadow, blueshifted by the fall. |
-| ![The ergosphere](showcase/chk_152.00.png) | |
-| The fall through the ergosphere, with the instrument HUD and a caption. | |
+| ![Edge-on](showcase/edge_on.png) | ![Inside the fall](showcase/inside_the_fall.png) |
+| The classic edge-on view. The far side of the disk is bent up over the shadow and down under it. | Falling in. The disk wraps around the shadow, and the Milky Way is bent into an arc. |
+| ![The Endurance and Miller's planet](showcase/endurance_and_millers_planet.png) | ![Crossing the horizon](showcase/horizon_crossing.png) |
+| The Endurance passing Miller's planet, both traced through the same curved spacetime as the disk. | Near the horizon, blueshifted by the fall. |
 
-**Stills from the film, spinning black hole (a = 0.6):**
+**The film, GARGANTUA**, from the opening shot to inside the horizon:
 
-![Film stills](showcase/film_preview_kerr_early.png)
+![The film](showcase/collage_film.jpg)
 
-**The fall, from the photon orbits to the inner horizon:**
+**The physics features**: the Event Horizon Telescope view, a hot spot riding the disk, Miller's planet with its real time dilation in the HUD, and a relativistic jet beamed toward us:
 
-![The fall](showcase/film_preview_kerr_fall.png)
+![Features](showcase/collage_features.jpg)
+
+**2 Min Render:**
+
+![Gargantua](showcase/wide_halo.png)
+
+## How it works
+
+### 1. One ray of light per pixel, traced backwards
+
+A normal 3D renderer draws triangles. This one doesn't have any. For every pixel on screen, the GPU sends a ray of light out of the camera and follows it into the scene: the reverse of the light that would land on that pixel. Whatever the ray runs into decides the pixel's colour.
+
+In empty space a ray is a straight line. Near a black hole it isn't.
+
+### 2. Gravity bends the light
+
+General relativity says mass curves spacetime, and light follows the straightest possible path through the curve (a *geodesic*). For a black hole that doesn't spin, the shape of every light path obeys one equation (the Binet equation, `u'' + u = 3/2 · r_s · u²`, with `u = 1/r`). The shader walks each ray along it in small steps, up to about a thousand per pixel per frame: the steps are smaller near the hole, where the bending is strongest.
+
+Lengths are measured in **Schwarzschild radii** (r_s), the size of the event horizon. For the film's Gargantua, 100 million times the mass of the Sun, 1 r_s is about 2 AU: twice the distance from the Earth to the Sun.
+
+### 3. What each ray can find
+
+- **The horizon.** If the ray falls in, the pixel is black. The black **shadow** is bigger than the horizon itself (a radius of about 2.6 r_s instead of 1), because light that comes too close spirals in.
+- **The accretion disk.** If the ray crosses the plane of the disk inside its edges, it picks up the disk's glow. Because rays bend, you see the far side of the disk too: bent up over the shadow and down under it. That's the famous *Interstellar* look.
+- **A scene object.** Hot spots, planets, ships and jets are tested against each piece of the bent ray, so they get lensed like everything else. You can even see a hot spot's second image swing around the ring.
+- **Nothing.** If the ray escapes, it samples the sky (stars, the Milky Way, nebulae, a spiral galaxy) in the direction it finally points. Rays that pass close to the hole land on the sky somewhere else entirely, which smears the stars into arcs and turns the galaxy behind the hole into a perfect **Einstein ring**.
+
+### 4. Why the disk looks the way it does
+
+The disk is gas orbiting the hole, hotter toward the inside. Its colour comes from **blackbody** radiation: hot gas glows white-blue, cooler gas orange-red.
+- **Doppler beaming.** The gas moves at up to about half the speed of light. The side coming toward you is brighter and bluer, the side moving away dimmer and redder.
+- **Gravitational redshift.** Light climbing out of the hole's gravity loses energy and reddens.
+- **The inner edge.** Gas can't orbit closer than the *innermost stable circular orbit* (ISCO); it spirals in. That's where the disk stops.
+- **The photon ring.** A thin line hugging the shadow: light that circled the hole before escaping.
+
+### 5. Spinning black holes
+
+The film's Gargantua spins, at a = 0.6 (the value *Interstellar*'s renders used). A spinning black hole drags space around with it (**frame dragging**), and light then follows a harder set of equations: Hamilton's equations in Kerr–Schild coordinates, integrated with RK4. What you see:
+- **A lopsided shadow,** pushed sideways toward the side of the disk that comes toward you, by about half a Schwarzschild radius. A jet, which comes out of the true spin axis, therefore isn't centred on the shadow.
+- **The disk reaches closer in:** the ISCO drops from 3 r_s to 1.91 r_s.
+- **The ergosphere,** where space is dragged so fast that nothing can stand still.
+- **A second, inner horizon** inside the first. Physics as we know it fails there, so the film stops short of it.
+
+At spin 0 the faster non-spinning tracer runs. Both tracers produce the same image at zero spin, which cross-checks two completely different sets of equations.
+
+### 6. Falling in
+
+The camera is a free-falling observer, and the maths stays exact even inside the horizon, where nothing can hover. While you fall:
+- **Aberration** squeezes the view ahead and brightens it.
+- **Your own Doppler and gravitational shift** turn light ahead blue and light behind red. The camera's auto exposure stops down, like a real lens would.
+- **A black cone** opens below you inside the horizon: no light from our universe can come from that direction.
+- **The universe** is squeezed into a band of light around you.
+
+The HUD shows the real numbers for 100 million suns: distance, speed, how much slower your clock runs than one far away, and the tides (gentle for a black hole this big).
+
+### 7. From rays to a picture
+
+The traced image is in high dynamic range. It then goes through bloom, ACES tone mapping, vignette, chromatic aberration, film grain, the letterbox, and a text overlay (titles, captions, HUD) drawn with Windows' GDI. The live preview traces at reduced resolution so it runs on any GPU.
+- **Progressive refinement:** when nothing moves, the viewport re-traces the view at full resolution with sub-pixel jitter and averages up to 64 samples.
+- **Video export:** each frame averages several sub-frames spread over the shutter time, which gives real motion blur and antialiasing. Frames are traced in small tiles (so the GPU driver never times out) and piped into ffmpeg.
+
+### 8. The sound
+
+There's no recorded music. A synthesiser written in C++ reads the camera's state:
+- **An organ** (A minor, in a cathedral reverb) swells as you approach the horizon.
+- **A clock** ticks once per second of *far-away* time. It speeds up with time dilation, and stops at the horizon, where no outside clock exists any more.
+- **The disk** roars when you're close, **a ship's engines** hum, and **a planet's ocean** swells.
+- **The ending:** at the cut to black the effects stop, and the organ resolves and rings out.
+
+The same code plays live and renders into the video.
+
+### 9. What's exact, and what's artistic licence
+
+Exact: the light paths (both tracers), the shadow, the lensing, the ISCO and horizons, the Doppler and gravitational shifts of the disk and the camera, beaming of the hot spot and the jet, and the HUD's clock rates and time dilation.
+
+Artistic licence:
+- **The disk's texture** is procedural noise.
+- **Objects:** planet and ship sizes are cinematic (a real planet would be a speck next to Gargantua), and orbit speeds are slowed down so you can watch them. Objects are drawn where they are at the frame's time, ignoring how long their light takes to arrive.
+- **The photon ring** is drawn as a smooth line instead of the even thinner rings inside it. Those would only sparkle on a pixel grid.
+- **The EHT view** is an approximate telescope blur, not a simulation of the telescope array.
 
 ## Features
 
-- **Two exact ray tracers:**
-  - **Schwarzschild** (still black hole): photon paths from the Binet equation.
-  - **Kerr** (spinning black hole, like the one in *Interstellar*): Hamilton's equations in Kerr–Schild coordinates.
-  - At zero spin both produce the same frames, which cross-checks two independent sets of equations.
-- **A camera that can fall in:** a free-falling observer whose maths stays exact inside the horizon, with relativistic aberration and its own Doppler and gravitational shift.
-- **An accretion disk** with an inner edge at the innermost stable orbit, blackbody colours, Doppler beaming and gravitational redshift.
-- **A procedural sky:** stars, the Milky Way, nebulae, and a galaxy that becomes an Einstein ring.
-- **Scene objects you can add and delete:** hot spots, planets (Miller's planet), ships (the Endurance) and relativistic jets. They're traced along the same bent rays, so they get lensed and Doppler shifted too.
-- **Event Horizon Telescope view:** the image as an Earth-sized radio telescope would see it, in the colours of the real M87* and Sagittarius A* photos.
-- **A soundtrack generated from the physics:** an organ that builds as you near the horizon, a clock that ticks with time dilation and stops at the horizon, a ship's engines and a planet's ocean. It plays live and renders into the video.
-- **Progressive refinement:** a still view sharpens itself to full resolution with 64-sample antialiasing.
-- **Film tools:** a sequencer with spline camera keys, titles and captions, a physics HUD in real units, letterbox and fades.
-- **Video export** up to 4K with real motion blur and antialiasing, piped into ffmpeg. Renders are split into tiles so heavy frames never crash the GPU driver.
+- **Two exact ray tracers:** non-spinning (Binet equation, leapfrog) and spinning (Kerr–Schild Hamiltonian, RK4).
+- **A camera that can fall in,** exact inside the horizon, with aberration and its own Doppler and gravitational shift.
+- **An accretion disk** with blackbody colours, Doppler beaming, gravitational redshift and an inner edge at the ISCO.
+- **A procedural sky** with stars, the Milky Way, nebulae, and a galaxy that becomes an Einstein ring.
+- **Scene objects you can add and delete:** hot spots, planets, ships and relativistic jets.
+- **Event Horizon Telescope view.**
+- **A physics-driven soundtrack.**
+- **Progressive refinement** and a **freeze time** button.
+- **Film tools:** a sequencer with spline camera keys, titles, captions, a physics HUD, letterbox and fades.
+- **Video export** up to 4K with motion blur and antialiasing.
 
-## Requirements
+## Getting started
 
-- Windows and a GPU with OpenGL 3.3.
-- **For video export, install ffmpeg** (`winget install ffmpeg`). Frames get piped straight into an H.264 MP4. Without ffmpeg, it writes BMP frames instead.
+- **Windows** and a GPU with **OpenGL 3.3**.
+- **For video export, install ffmpeg** (`winget install ffmpeg`). Without it, the app writes BMP frames instead of an MP4.
+- **Build** with `build.bat`, from an "x64 Native Tools Command Prompt for VS" (MSVC) or any shell with MinGW `g++` on PATH. Then run `gargantua_gl.exe`.
+
+The app opens on the film, playing in a loop. Left-drag the viewport to take over the camera, right-drag to look around, wheel to move closer, **P** to freeze time, **Tab** for a full-window picture. Help > Controls lists everything.
 
 ## The film: GARGANTUA (3 min 32 s)
 
-The app starts by playing it in a loop, letterboxed to 2.39:1 with titles, chapter cards and captions:
-1. **The shadow.** Title card over deep space, where a tiny black hole bends the stars. Then the approach into the classic edge-on view.
+Letterboxed to 2.39:1, with titles, chapter cards and captions:
+1. **The shadow.** Deep space, where a tiny black hole bends the stars. Then the approach into the classic edge-on view.
 2. **The whirlpool.** Rise to a top-down shot of the whole swirling disk, with the red **hot spot** riding it.
-3. **The ring.** A distant spiral galaxy lines up exactly behind the hole, and gravity bends it into a complete **Einstein ring**. Then the view fades into what the **Event Horizon Telescope** would see.
-4. **The disk.** Descend to skim just above the disk as the **Endurance** overtakes the camera. An instrument HUD fades in.
-5. **Miller's planet.** An ocean world on the closest stable orbit, lit by the disk.
-6. **The fall.** Turn to face the hole and let go. Free fall past the photon orbits, through the ergosphere, across the event horizon, and down toward the inner horizon. Cut to black, then the end card.
+3. **The ring.** A galaxy lines up exactly behind the hole, and gravity bends it into a complete **Einstein ring**. Then the view fades into what the **Event Horizon Telescope** would see.
+4. **The disk.** Skim just above the disk as the **Endurance** overtakes the camera. An instrument HUD fades in.
+5. **Miller's planet.** An ocean world on the closest stable orbit, lit by the disk. At this spin an hour there lasts about an hour and a half far away. *Interstellar*'s seven years needs a black hole spinning within a hundred-trillionth of the limit.
+6. **The fall.** Let go: free fall past the photon orbits, through the ergosphere, across the event horizon, toward the inner horizon. Cut to black, and the music rings out over the end card.
 
 ## Scene objects
 
-Add them with **+ Add** in the Outliner (or right-click its empty space). Right-click an object to rename, duplicate or delete it, and use the eye icon to hide it. Up to 8 visible objects are traced at once. Each has its own settings in Details, and a film window: while the film plays it only shows between two times. Objects are saved with the sequence.
-- **Hot Spot:** a bubble of superheated gas on an orbit. Flares like this have been observed circling Sagittarius A*, the black hole at the centre of our galaxy. It is Doppler boosted by its real orbital speed, so it brightens on the side coming toward you, and you can see its lensed second image chase it around the ring.
-- **Planet:** an ocean world lit by the disk, with long swells, drifting cloud bands, a sun glint and a thin glowing atmosphere. Details shows its real time dilation for the current spin. On Miller's orbit at a = 0.6, one hour on the surface is about 1 h 31 min far away. *Interstellar*'s seven years per hour needs a black hole spinning within a hundred-trillionth of the maximum.
-- **Ship:** the Endurance, twelve modules on a spinning ring around a hub, with lit windows. It can orbit the hole or fly the film camera's own path through space, a little ahead of it: it overtakes from behind when its film window opens and pulls away ahead before it closes. In the free camera it waits at its stretch of the path, so you can fly over to it.
-- **Relativistic Jet:** plasma shot out along the spin axis at a chosen speed. Relativistic beaming makes the jet coming toward you outshine the one going away. It's in the scene but switched off, because Gargantua in the film has none.
-
-Planet and ship sizes are cinematic: a real planet would be a speck next to a black hole of 100 million suns.
-
-## The Event Horizon Telescope view
-
-In 2019 and 2022 the Event Horizon Telescope, a network of radio dishes as wide as the Earth, photographed the black holes M87* and Sagittarius A*. They appear as a blurred orange ring around a dark centre, brighter on one side, because the gas there moves toward us (Doppler beaming). The telescope view (Post Process in Details, or the **EHT** button in the viewport) blurs the image to roughly that resolution, darkens the radio sky, and uses the same colour map. The film fades into it during act III with a **Telescope view** cue, which you can add to your own sequences too.
-
-## Gargantua spins
-
-Like the film's black hole, Gargantua rotates, with spin a = 0.6 M (the value *Interstellar*'s renders used). Set **Spin** to anything above 0 and a full Kerr ray tracer takes over:
-- Light rays follow exact null geodesics in Cartesian Kerr–Schild coordinates (Hamilton's equations, RK4), which stay smooth through the horizon.
-- The spin drags space around, so the shadow is lopsided, and the disk's inner edge moves in to the spinning ISCO (1.91 r_s at a = 0.6, instead of 3).
-- The disk's colour shift is exact for gas on circular Kerr orbits.
-- Inside a spinning hole there is a second, inner horizon (0.10 r_s at a = 0.6). Physics as we know it fails there, so the film stops short of it.
-
-At spin 0 the faster Schwarzschild tracer is used.
-
-The spin also pushes the shadow sideways, toward the side of the disk that comes toward you (by roughly half a Schwarzschild radius at a = 0.6). That's why a relativistic jet, which comes out of the true spin axis, doesn't line up with the middle of the shadow. At spin 0 the two line up exactly.
-
-The thin bright line hugging the shadow is the photon ring: light that circled the hole before reaching you. It's far thinner than a pixel, so the tracer draws it with the disk's average brightness instead of its streaks, and leaves out the even thinner rings inside it; otherwise it would only sparkle.
-
-## The physics of the fall (no spin)
-
-The camera is a free-falling observer. Inside the horizon, a hovering ("static") camera can't exist, so the ray tracer works in the free-falling frame instead (Painlevé–Gullstrand coordinates). In that frame space is flat, and a light ray's path is its local direction plus the fall velocity √(r_s/r). The maths is exact at every radius, including inside the horizon. What you see along the way:
-- **Aberration:** the view ahead is squeezed and brightened.
-- **Your own Doppler and gravitational shift:** light ahead turns blue, light behind turns red.
-- **A black cone:** inside the horizon, light from straight "below" can't have come from our universe.
-
-The HUD shows the real numbers for a 100 million solar-mass black hole: distance, speed relative to a hovering observer, clock rate compared to far away, and head-to-toe tides. Without spin it also shows the proper time left before the singularity; with spin it shows the spin and both horizons, and it says when you are in the ergosphere, where nothing can stay still.
-
-## The soundtrack
-
-There's no recorded music. The soundtrack is synthesised from the camera's state, so it follows exactly what the physics is doing:
-- **Distance from the horizon builds the organ.** Far away it's one quiet chord, a slow progression in A minor in a big cathedral reverb. Closer in, it adds a deep pedal note, then an octave doubling, then a high shimmer, and swells from about −26 dB to −9 dB.
-- **Time dilation drives a ticking clock:** a soft knock, once per second of far-away time, the same number the HUD shows. Far out it ticks once a second. During the fall it speeds up to 7 and then 30 ticks a second, because your clock runs that much slower. It stops dead when no outside clock exists any more: in the ergosphere and inside the horizon.
-- **The disk** adds a low roar when you're close to it, and the roar brightens with the Doppler shift you see straight ahead.
-- **Scene objects:** a ship nearby adds a low, slowly throbbing engine hum; a planet nearby adds the swell of its ocean.
-- **The ending:** at the cut to black the clock, roar, hum and ocean stop with the picture, but the music doesn't. The organ resolves home to A minor and rings out in the hall over the end card.
-
-It plays live in the editor: fly the free camera toward the hole and listen. It also renders into videos sample-exact, and is saved as a WAV next to the video. The speaker button on the toolbar mutes it; the volume is under Film in Details.
+**+ Add** in the Outliner creates one; right-click an object to rename, duplicate or delete it; the eye icon hides it. Up to 8 visible objects are traced at once. Each has its own settings in Details and an optional film window (it only appears between two times while the film plays). Objects are saved with the sequence.
+- **Hot Spot:** a bubble of superheated gas on an orbit, like the flares observed around Sagittarius A*. Doppler boosted by its real orbital speed.
+- **Planet:** an ocean world with swells, clouds and an atmosphere. Details shows its real time dilation for the current spin.
+- **Ship:** the Endurance, twelve modules on a spinning ring. It orbits the hole, or flies the film camera's path a little ahead of it, overtaking the camera.
+- **Relativistic Jet:** plasma along the spin axis; the side coming toward you is beamed brighter. In the scene but switched off, since the film's Gargantua has none.
 
 ## The editor
 
-The app opens as an editor laid out like Unreal Engine 5:
-- **Toolbar:** save/open, a Film / Free Camera switch, transport (start, play/pause, stop, end, loop), **freeze time** (P) and playback speed. On the right: **Scalability**, Screenshot, Render and Cinema.
-- **Viewport:** the live image. Left-drag orbits, right-drag looks around, and the wheel moves closer or farther. Grabbing the view during the film switches to the free camera at the exact current shot. The buttons in its top-left corner switch the camera, the black hole (Kerr / Schwarzschild), the quality and the letterbox.
-- **Outliner:** the scene's actors: Gargantua, Accretion Disk, Sky, Camera, Post Process and Film, plus the objects you add (hot spots, planets, ships, jets). **+ Add** creates one; right-click to rename, duplicate or delete; the eye icons show or hide.
-- **Details:** the properties of whatever is selected, in collapsible categories. Select something in the Outliner or the Sequencer to edit it here.
-- **Sequencer:** the film as tracks: camera keys (orange = hovering, blue = free fall), titles & chapters, captions, and the HUD & effects (HUD, telescope view). Click a key or a clip to edit it in Details, drag a key to retime it, and click or drag anywhere else to scrub. **K** adds a key from the current view and **Delete** removes the selection. The camera moves along smooth spline curves between keys.
-- **Movie Render Queue:** video settings and the **Render Film** button. You can choose 720p up to 4K, at 24, 30 or 60 fps. "Samples per frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
-- **Status bar:** messages on the left. On the right: the tracer, the preview resolution and quality (or the refinement progress), and the fps.
-- **Cinema mode (Tab):** the image fills the window with no UI. Tab or Esc brings the editor back.
+Laid out like Unreal Engine 5:
+- **Toolbar:** save/open, Film / Free Camera, transport, **freeze time**, playback speed; then **Scalability**, Screenshot, Render and Cinema on the right.
+- **Viewport:** the live image, with quick buttons for the camera, the black hole type, quality, letterbox and the **EHT** view.
+- **Outliner and Details:** the scene's actors, and the properties of whatever is selected.
+- **Sequencer:** camera keys and caption clips on tracks. Click to edit, drag a key to retime it, K adds a key, Delete removes one.
+- **Movie Render Queue:** resolution, frame rate, samples, shutter, soundtrack, and **Render Film**.
+- **Status bar:** messages, the tracer, the preview resolution or refinement progress, and the fps.
 
-Drag any panel's tab to dock it somewhere else. Window > Reset Layout restores the default.
+Drag panel tabs to rearrange them; Window > Reset Layout restores the default. The preview always starts on **Low** quality; renders always use full quality.
 
-The preview always starts on **Low** quality, so it runs on any GPU. Raise it with Scalability (Low, Medium, High, Ultra). Video renders and screenshots always use full quality, whatever the preview is set to.
+## Renders and the command line
 
-**Progressive refinement:** when the picture stops changing (the film paused, or time frozen with the hourglass button or P), the viewport re-traces it at full resolution with Ultra geodesics and sub-pixel jitter. It traces a few tiles per frame so the editor stays responsive, and averages up to 64 samples. Then it stops tracing, so the GPU goes idle. The status bar shows "Refining 12 / 64". It's on by default; turn it off in the viewport's quality menu.
+Everything the app renders goes into `renders\` next to the exe: videos (with a WAV of the soundtrack), screenshots (F12), stills, and `ffmpeg_log.txt`. File > Open Renders Folder opens it.
 
-## Renders
+**For a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics. Try 720p with 4 samples first to check the timing.
 
-Everything the app renders goes into the `renders\` folder next to the exe, which is created when needed: videos, screenshots (F12), command-line stills, BMP frames when ffmpeg is missing, and `ffmpeg_log.txt`. File > Open Renders Folder opens it.
+| Option | Does |
+| --- | --- |
+| `--stills 30,72,163` | save `renders\still_<time>.png` for each film time, then quit |
+| `--render` | render the film to video with the current settings, then quit |
+| `--soundtrack file.wav` | write the film's soundtrack, then quit |
+| `--at 90` | open the editor with the film paused at 90 s |
+| `--res 0`–`3`, `--fps 0`–`2`, `--samples 8` | 720p…4K, 24/30/60 fps, samples per frame |
+| `--sequence file.txt`, `--spin 0.9`, `--prefix name_` | your own sequence, the spin, still file names |
 
-**Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That's 11,160 frames × 16 samples, so try a 720p render with 4 samples first to check the timing.
+In batch modes, errors go to `renders\error_log.txt` instead of a dialog.
 
-**Command line:**
-- `--stills 30,72,163`: save `renders\still_<time>.png` for each film time, then quit.
-- `--render`: render the film to video with the current settings, then quit (for batch renders).
-- `--soundtrack file.wav`: write the film's soundtrack, then quit.
-- `--at 90`: open the editor with the film paused at that time.
-
-Options for the above: `--res 0`–`3` (720p up to 4K), `--fps 0`–`2` (24/30/60), `--samples 8`, `--sequence file.txt` (your own sequence), `--spin 0.9`, and `--prefix name_` for still file names.
-
-## Building
-
-Run `build.bat`, from an "x64 Native Tools Command Prompt for VS" for MSVC, or from any shell with MinGW `g++` on PATH. The source is split into modules:
+## Project layout
 
 | Folder | What's in it |
 | --- | --- |
 | `src/core` | Reusable in any project: vector maths, an OpenGL 3.3 loader with shader/target/uniform helpers, formatting and timing utilities. |
-| `src/sim` | The camera, the scene parameters, scene objects (orbits, the chase ship, save/load), and CPU-side relativity (observer velocities, Kerr–Schild fields, horizons, ISCO, orbital time dilation, auto exposure). |
-| `src/render` | The GLSL shaders, the render passes (scene, bloom, composite), progressive refinement, the GDI text overlay, and the video/screenshot exporter. |
-| `src/film` | The sequencer engine (keys, cues, fades, save/load) and `gargantua_film.cpp`, the film itself as data. |
-| `src/editor` | The editor: theme and widgets, Outliner/Details/Movie Render Queue, Sequencer, and the frame (menu, toolbar, status bar, dock layout, viewport). |
-| `src/audio` | The physics-driven synthesiser, live playback (waveOut) and the offline soundtrack. |
+| `src/sim` | The camera, the scene parameters, scene objects, and CPU-side relativity (observer velocities, Kerr–Schild fields, horizons, ISCO, time dilation, auto exposure). |
+| `src/render` | The GLSL shaders, the render passes (scene, bloom, composite), progressive refinement, the text overlay, and the video/screenshot exporter. |
+| `src/film` | The sequencer engine and `gargantua_film.cpp`, the film itself as data. |
+| `src/audio` | The physics-driven synthesiser, live playback and the offline soundtrack. |
+| `src/editor` | The editor: theme and widgets, panels, sequencer, and the frame (menu, toolbar, status bar, docking, viewport). |
 | `src/app` | Application state shared by the modules. |
 | `src/main.cpp` | Window, input and the frame loop. |
