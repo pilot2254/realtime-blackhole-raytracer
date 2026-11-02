@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <cstring>
 #include "app/app.h"
+#include "audio/audio.h"
 #include "core/util.h"
 #include "editor/editor_internal.h"
 #include "film/sequence.h"
 #include "render/export.h"
+#include "render/refine.h"
 #include "sim/params.h"
 
 const char* QUALITY_NAMES[4] = {"Low", "Medium", "High", "Ultra"};
@@ -152,9 +154,12 @@ static void drawToolbar() {
         ImGui::EndDisabled();
 
         // right side: preview quality, screenshot, render, cinema
-        float right = ImGui::CalcTextSize("Scalability: Ultra").x + ImGui::GetFrameHeight() * 1.6f + ed::toolButtonWidth("Screenshot") +
+        float right = ed::toolButtonWidth(nullptr) + ImGui::CalcTextSize("Scalability: Ultra").x + ImGui::GetFrameHeight() * 1.6f + ed::toolButtonWidth("Screenshot") +
                       ed::toolButtonWidth(busy ? "Cancel Render" : "Render") + ed::toolButtonWidth("Cinema") + 40 * g_dpi;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10, ImGui::GetWindowWidth() - right));
+        if (ed::toolButton("##sound", g_soundOn ? ed::IC_SOUND : ed::IC_MUTE, nullptr, g_soundOn ? "Mute the soundtrack" : "Unmute the soundtrack"))
+            g_soundOn = !g_soundOn;
+        ImGui::SameLine();
         ImGui::BeginDisabled(busy);
         char q[48]; std::snprintf(q, sizeof q, "Scalability: %s", QUALITY_NAMES[g_quality]);
         ImGui::SetNextItemWidth(ImGui::CalcTextSize("Scalability: Ultra").x + ImGui::GetFrameHeight() * 1.6f);
@@ -197,10 +202,14 @@ static void drawStatusBar(float fps, int renderW, int renderH) {
         } else {
             ImGui::TextDisabled("%s", g_status.empty() ? "Ready" : g_status.c_str());
         }
-        char right[160];
+        char right[200], preview[80];
+        int n = refineSamples();
+        if (n >= REFINE_MAX) std::snprintf(preview, sizeof preview, "Refined %d x %d", g_viewW, g_viewH);
+        else if (n > 0) std::snprintf(preview, sizeof preview, "Refining %d / %d", n, REFINE_MAX);
+        else std::snprintf(preview, sizeof preview, "Preview %d x %d (%s)", renderW, renderH, QUALITY_NAMES[g_quality]);
         if (g_job.active) std::snprintf(right, sizeof right, "%d x %d   |   %.0f fps", g_job.W, g_job.H, fps);
-        else std::snprintf(right, sizeof right, "%s   |   Preview %d x %d (%s)   |   %.0f fps",
-                           P.spin > 0 ? fmt("Kerr  a = %.2f", P.spin).c_str() : "Schwarzschild", renderW, renderH, QUALITY_NAMES[g_quality], fps);
+        else std::snprintf(right, sizeof right, "%s   |   %s   |   %.0f fps",
+                           P.spin > 0 ? fmt("Kerr  a = %.2f", P.spin).c_str() : "Schwarzschild", preview, fps);
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(right).x - 12 * g_dpi);
         if (fps < 20 && !g_job.active) ImGui::TextColored(ed::rgb(240, 120, 100), "%s", right);
         else ImGui::TextDisabled("%s", right);
@@ -317,6 +326,9 @@ void panelViewport(GLuint tex, int renderW, int renderH) {
     }
     if (ImGui::BeginPopup("vp_q")) {
         for (int i = 0; i < 4; i++) if (ImGui::MenuItem(QUALITY_NAMES[i], nullptr, i == g_quality)) applyQuality(i);
+        ImGui::Separator();
+        ImGui::MenuItem("Refine when still", nullptr, &g_refineOn);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("When nothing moves, re-trace the view at full resolution and average 64 samples.");
         ImGui::EndPopup();
     }
     ImGui::End();

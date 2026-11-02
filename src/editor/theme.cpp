@@ -125,6 +125,18 @@ void drawIcon(ImDrawList* dl, int icon, ImVec2 c, float s, ImU32 col) {
         else dl->AddLine(P(-0.7f, 0.7f), P(0.7f, -0.7f), col, t);
         break;
     case IC_KEY:    dl->AddQuadFilled(P(0.0f, -0.7f), P(0.7f, 0.0f), P(0.0f, 0.7f), P(-0.7f, 0.0f), col); break;
+    case IC_SOUND:
+    case IC_MUTE:   dl->AddRectFilled(P(-0.85f, -0.3f), P(-0.5f, 0.3f), col);
+                    dl->AddTriangleFilled(P(-0.55f, -0.3f), P(0.0f, -0.75f), P(0.0f, 0.75f), col);
+                    dl->AddTriangleFilled(P(-0.55f, -0.3f), P(0.0f, 0.75f), P(-0.55f, 0.3f), col);
+                    if (icon == IC_SOUND) {
+                        dl->PathArcTo(P(0.0f, 0.0f), s * 0.45f, -0.8f, 0.8f, 8); dl->PathStroke(col, 0, t);
+                        dl->PathArcTo(P(0.0f, 0.0f), s * 0.8f, -0.8f, 0.8f, 10); dl->PathStroke(col, 0, t);
+                    } else {
+                        dl->AddLine(P(0.25f, -0.35f), P(0.85f, 0.35f), col, t * 1.3f);
+                        dl->AddLine(P(0.25f, 0.35f), P(0.85f, -0.35f), col, t * 1.3f);
+                    }
+                    break;
     case IC_BLACKHOLE:
         dl->AddEllipse(c, ImVec2(s * 0.95f, s * 0.38f), col, 0.0f, 20, t);
         dl->AddCircleFilled(c, s * 0.45f, IM_COL32(0, 0, 0, 255), 16);

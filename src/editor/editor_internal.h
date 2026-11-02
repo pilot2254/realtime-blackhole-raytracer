@@ -23,7 +23,7 @@ extern int selKind, selObject, selKey, selCue;
 // ---------------------------------------------------------------- icons and widgets
 enum Icon {
     IC_PLAY, IC_PAUSE, IC_STOP, IC_START, IC_END, IC_LOOP, IC_SAVE, IC_OPEN, IC_SHOT, IC_RECORD, IC_CINEMA,
-    IC_SETTINGS, IC_FOLDER, IC_PLUS, IC_EYE, IC_EYE_OFF, IC_KEY,
+    IC_SETTINGS, IC_FOLDER, IC_PLUS, IC_EYE, IC_EYE_OFF, IC_KEY, IC_SOUND, IC_MUTE,
     IC_BLACKHOLE, IC_DISK, IC_SKY, IC_CAMERA, IC_POST, IC_FILM, IC_TEXT, IC_HUD
 };
 void drawIcon(ImDrawList* dl, int icon, ImVec2 c, float s, ImU32 col);

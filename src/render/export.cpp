@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include "app/app.h"
+#include "audio/audio.h"
 #include "core/util.h"
 #include "film/sequence.h"
 #include "render/overlay.h"
@@ -101,8 +102,14 @@ void beginExport(bool screenshot) {
         args = std::string("-y -loglevel error -f rawvideo -pix_fmt rgb24 -s ") + sz + " -i - -frames:v 1 \"" + j.out + "\"";
     } else {
         j.out = renderPath(g_exName);
+        // the soundtrack is rendered offline first (a few seconds), then muxed in by ffmpeg
+        std::string audio, stem = g_exName;
+        if (stem.size() > 4 && stem.compare(stem.size() - 4, 4, ".mp4") == 0) stem.resize(stem.size() - 4);
+        std::string wav = renderPath(stem + "_soundtrack.wav");
+        if (g_exAudio && renderSoundtrack(wav, seqLength()))
+            audio = " -i \"" + wav + "\" -map 0:v -map 1:a -c:a aac -b:a 256k -shortest";
         args = std::string("-y -loglevel error -f rawvideo -pix_fmt rgb24 -s ") + sz + " -r " + std::to_string(j.fps) +
-               " -i - -c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p -movflags +faststart \"" + j.out + "\"";
+               " -i -" + audio + " -c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p -movflags +faststart \"" + j.out + "\"";
     }
     j.useFfmpeg = startFfmpeg(args);
     if (!j.useFfmpeg) {

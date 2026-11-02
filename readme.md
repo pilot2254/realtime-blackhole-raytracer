@@ -36,6 +36,8 @@ The images below were rendered with the app.
 - **A camera that can fall in:** a free-falling observer whose maths stays exact inside the horizon, with relativistic aberration and its own Doppler and gravitational shift.
 - **An accretion disk** with an inner edge at the innermost stable orbit, blackbody colours, Doppler beaming and gravitational redshift.
 - **A procedural sky:** stars, the Milky Way, nebulae, and a galaxy that becomes an Einstein ring.
+- **A soundtrack generated from the physics:** an organ that builds as you near the horizon, and a clock that ticks with time dilation and stops at the horizon. It plays live and renders into the video.
+- **Progressive refinement:** a still view sharpens itself to full resolution with 64-sample antialiasing.
 - **Film tools:** a sequencer with spline camera keys, titles and captions, a physics HUD in real units, letterbox and fades.
 - **Video export** up to 4K with real motion blur and antialiasing, piped into ffmpeg. Renders are split into tiles so heavy frames never crash the GPU driver.
 
@@ -72,6 +74,16 @@ The camera is a free-falling observer. Inside the horizon, a hovering ("static")
 
 The HUD shows the real numbers for a 100 million solar-mass black hole: distance, speed relative to a hovering observer, clock rate compared to far away, and head-to-toe tides. Without spin it also shows the proper time left before the singularity; with spin it shows the spin and both horizons, and it says when you are in the ergosphere, where nothing can stay still.
 
+## The soundtrack
+
+There's no recorded music. The soundtrack is synthesised from the camera's state, so it follows exactly what the physics is doing:
+- **Distance from the horizon builds the organ.** Far away it's one quiet chord, a slow progression in A minor in a big cathedral reverb. Closer in, it adds a deep pedal note, then an octave doubling, then a high shimmer, and swells from about −26 dB to −9 dB.
+- **Time dilation drives a ticking clock:** one tick per second of far-away time, the same number the HUD shows. Far out it ticks once a second. During the fall it speeds up to 7 and then 30 ticks a second, because your clock runs that much slower. It stops dead when no outside clock exists any more: in the ergosphere and inside the horizon.
+- **The disk** adds a low roar when you're close to it, and the roar brightens with the Doppler shift you see straight ahead.
+- **The cut to black** is total silence, including the reverb tail.
+
+It plays live in the editor: fly the free camera toward the hole and listen. It also renders into videos sample-exact, and is saved as a WAV next to the video. The speaker button on the toolbar mutes it; the volume is under Film in Details.
+
 ## The editor
 
 The app opens as an editor laid out like Unreal Engine 5:
@@ -81,12 +93,14 @@ The app opens as an editor laid out like Unreal Engine 5:
 - **Details:** the properties of whatever is selected, in collapsible categories. Select something in the Outliner or the Sequencer to edit it here.
 - **Sequencer:** the film as tracks: camera keys (orange = hovering, blue = free fall), titles & chapters, captions and the HUD. Click a key or a clip to edit it in Details, drag a key to retime it, and click or drag anywhere else to scrub. **K** adds a key from the current view and **Delete** removes the selection. The camera moves along smooth spline curves between keys.
 - **Movie Render Queue:** video settings and the **Render Film** button. You can choose 720p up to 4K, at 24, 30 or 60 fps. "Samples per frame" averages sub-frames over the shutter interval, which gives real motion blur plus antialiasing. Titles, captions and the HUD are rendered into the video.
-- **Status bar:** messages on the left. On the right: the tracer, the preview resolution and quality, and the fps.
+- **Status bar:** messages on the left. On the right: the tracer, the preview resolution and quality (or the refinement progress), and the fps.
 - **Cinema mode (Tab):** the image fills the window with no UI. Tab or Esc brings the editor back.
 
 Drag any panel's tab to dock it somewhere else. Window > Reset Layout restores the default.
 
 The preview always starts on **Low** quality, so it runs on any GPU. Raise it with Scalability (Low, Medium, High, Ultra). Video renders and screenshots always use full quality, whatever the preview is set to.
+
+**Progressive refinement:** when the picture stops changing (the film paused, or the free camera still with time paused), the viewport re-traces it at full resolution with Ultra geodesics and sub-pixel jitter. It traces a few tiles per frame so the editor stays responsive, and averages up to 64 samples. Then it stops tracing, so the GPU goes idle. The status bar shows "Refining 12 / 64". It's on by default; turn it off in the viewport's quality menu.
 
 ## Renders
 
@@ -94,11 +108,13 @@ Everything the app renders goes into the `renders\` folder next to the exe, whic
 
 **Recommended settings for a final render:** 1080p or 4K, 60 fps, 16 samples, shutter 0.5, Ultra geodesics on. That's 11,160 frames × 16 samples, so try a 720p render with 4 samples first to check the timing.
 
-**Stills from the command line:** `gargantua_gl.exe --stills 30,72,163 --res 1 --samples 8` saves `renders\still_<time>.png` for each film time and quits. Other options:
-- `--res 0`–`3`: 720p up to 4K
-- `--sequence file.txt`: use your own sequence
-- `--spin 0.9`: change the spin
-- `--prefix name_`: change the file names
+**Command line:**
+- `--stills 30,72,163`: save `renders\still_<time>.png` for each film time, then quit.
+- `--render`: render the film to video with the current settings, then quit (for batch renders).
+- `--soundtrack file.wav`: write the film's soundtrack, then quit.
+- `--at 90`: open the editor with the film paused at that time.
+
+Options for the above: `--res 0`–`3` (720p up to 4K), `--fps 0`–`2` (24/30/60), `--samples 8`, `--sequence file.txt` (your own sequence), `--spin 0.9`, and `--prefix name_` for still file names.
 
 ## Building
 
@@ -108,8 +124,9 @@ Run `build.bat`, from an "x64 Native Tools Command Prompt for VS" for MSVC, or f
 | --- | --- |
 | `src/core` | Reusable in any project: vector maths, an OpenGL 3.3 loader with shader/target/uniform helpers, formatting and timing utilities. |
 | `src/sim` | The camera, the scene parameters, and CPU-side relativity (observer velocities, Kerr–Schild fields, horizons, ISCO, auto exposure). |
-| `src/render` | The GLSL shaders, the render passes (scene, bloom, composite), the GDI text overlay, and the video/screenshot exporter. |
+| `src/render` | The GLSL shaders, the render passes (scene, bloom, composite), progressive refinement, the GDI text overlay, and the video/screenshot exporter. |
 | `src/film` | The sequencer engine (keys, cues, fades, save/load) and `gargantua_film.cpp`, the film itself as data. |
 | `src/editor` | The editor: theme and widgets, Outliner/Details/Movie Render Queue, Sequencer, and the frame (menu, toolbar, status bar, dock layout, viewport). |
+| `src/audio` | The physics-driven synthesiser, live playback (waveOut) and the offline soundtrack. |
 | `src/app` | Application state shared by the modules. |
 | `src/main.cpp` | Window, input and the frame loop. |

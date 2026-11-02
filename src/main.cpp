@@ -25,12 +25,14 @@
 #include "imgui_impl_win32.h"
 
 #include "app/app.h"
+#include "audio/audio.h"
 #include "core/gl.h"
 #include "core/util.h"
 #include "editor/editor.h"
 #include "film/sequence.h"
 #include "render/export.h"
 #include "render/overlay.h"
+#include "render/refine.h"
 #include "render/renderer.h"
 #include "sim/params.h"
 #include "sim/physics.h"
@@ -44,6 +46,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "winmm.lib")
 #pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 #endif
 
@@ -124,8 +127,12 @@ int main() {
     defaultSequence();
 
     // --stills t1,t2,...  [--res 0..3] [--samples n] [--spin a] [--sequence file] [--prefix name_]
-    // saves screenshots of the film at those times into renders/, then quits
+    //   saves screenshots of the film at those times into renders/, then quits
+    // --render          renders the film to video with the current settings, then quits
+    // --at t            opens the film paused at time t
+    // --soundtrack file writes the film's soundtrack as a WAV, then quits
     std::vector<float> stills;
+    bool renderMode = false, renderStarted = false;
     for (int i = 1; i < __argc; i++) {
         std::string a = __argv[i];
         if (a == "--stills" && i + 1 < __argc) {
@@ -135,6 +142,14 @@ int main() {
         else if (a == "--sequence" && i + 1 < __argc) loadSequence(__argv[++i]);
         else if (a == "--spin" && i + 1 < __argc) P.spin = std::max(0.0f, std::min(0.998f, (float)std::atof(__argv[++i])));
         else if (a == "--prefix" && i + 1 < __argc) g_stillPrefix = __argv[++i];
+        else if (a == "--render") renderMode = true;
+        else if (a == "--fps" && i + 1 < __argc) g_exFps = std::max(0, std::min(2, std::atoi(__argv[++i])));
+        else if (a == "--at" && i + 1 < __argc) {                   // open the film paused at this time
+            g_playhead = (float)std::atof(__argv[++i]); g_playing = false;
+        }
+        else if (a == "--soundtrack" && i + 1 < __argc) {           // write the film's soundtrack and quit
+            return renderSoundtrack(__argv[++i], seqLength()) ? 0 : 1;
+        }
     }
     size_t stillNext = 0;
 
@@ -173,6 +188,7 @@ int main() {
     editorInit();
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplOpenGL3_Init("#version 330");
+    if (stills.empty() && !renderMode) audioOpen();
 
     Target scene, view8;                 // HDR scene at render scale, graded LDR image for the viewport panel
     std::vector<Target> mips;
@@ -202,6 +218,12 @@ int main() {
             beginExport(true);
         }
 
+        if (renderMode && !g_job.active) {
+            if (renderStarted) break;
+            beginExport(false);
+            renderStarted = true;
+        }
+
         if (P.iscoEdge) P.diskIn = iscoRs(P.spin) * std::max(P.gravity, 0.01f);
         P.diskOut = std::max(P.diskOut, P.diskIn + 0.5f);
 
@@ -223,17 +245,26 @@ int main() {
         if (g_job.active) {
             exportStep();
         } else if (outW >= 8 && outH >= 8) {
-            int sw = std::max(1, (int)(outW * P.renderScale)), sh = std::max(1, (int)(outH * P.renderScale));
-            if (scene.w != sw || scene.h != sh) { freeTarget(scene); scene = makeTarget(sw, sh); buildMips(mips, sw, sh); }
+            CamState cam = currentCam();
+            CamFrame cf = camBasis(cam);
+            float t = currentTime();
             if (g_showUI && (view8.w != outW || view8.h != outH)) { freeTarget(view8); view8 = makeTarget(outW, outH, false); }
-            p_glBindFramebuffer(K_FRAMEBUFFER, scene.fbo);
-            glViewport(0, 0, scene.w, scene.h);
-            setSceneUniforms(scene.w, scene.h, camBasis(currentCam()), currentTime(), 0, 0, P.ultra ? 0.012f : 0.03f);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            runBloom(scene, mips);
+            // a still picture is refined at full resolution; otherwise the fast preview at render scale
+            const Target* img = refineUpdate(outW, outH, cf, t, g_refineOn);
+            std::vector<Target>* imgMips = &refineMips();
+            if (!img) {
+                int sw = std::max(1, (int)(outW * P.renderScale)), sh = std::max(1, (int)(outH * P.renderScale));
+                if (scene.w != sw || scene.h != sh) { freeTarget(scene); scene = makeTarget(sw, sh); buildMips(mips, sw, sh); }
+                p_glBindFramebuffer(K_FRAMEBUFFER, scene.fbo);
+                glViewport(0, 0, scene.w, scene.h);
+                setSceneUniforms(scene.w, scene.h, cf, t, 0, 0, P.ultra ? 0.012f : 0.03f);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                runBloom(scene, mips);
+                img = &scene; imgMips = &mips;
+            }
             overlayUpdate(g_ovView, outW, outH, g_playhead, g_camMode == CAM_SEQUENCE);
-            composite(g_showUI ? view8.fbo : 0, outW, outH, scene, mips, currentTime(), currentFade(), g_ovView,
-                      P.exposure * autoExposure(currentCam()));
+            composite(g_showUI ? view8.fbo : 0, outW, outH, *img, *imgMips, t, currentFade(), g_ovView,
+                      P.exposure * autoExposure(cam));
             drewToWindow = !g_showUI;
         }
         p_glBindFramebuffer(K_FRAMEBUFFER, 0);
@@ -248,6 +279,14 @@ int main() {
             glViewport(0, 0, g_w, g_h);
         }
 
+        // ---- sound: the organ follows the camera live; silent while paused or rendering
+        {
+            bool running = !g_job.active && (g_camMode == CAM_SEQUENCE ? g_playing : !g_paused);
+            SoundControls ctl = soundControls(currentCam(), currentFade());
+            ctl.level *= (g_soundOn && running) ? g_volume : 0.0f;
+            audioPump(currentTime(), running, ctl);
+        }
+
         // ---- editor
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplWin32_NewFrame();
@@ -259,6 +298,7 @@ int main() {
     }
 
     if (g_job.active) endExport(true);
+    audioClose();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

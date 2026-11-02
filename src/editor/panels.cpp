@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include "app/app.h"
+#include "audio/audio.h"
 #include "core/util.h"
 #include "editor/editor.h"
 #include "editor/editor_internal.h"
@@ -212,6 +213,14 @@ static void detailsFilm() {
         propValue("Length", b);
         endProps();
     }
+    if (category("Sound") && beginProps("film_sound")) {
+        propCheck("Soundtrack", &g_soundOn, "An organ that builds as you near the horizon, a clock that ticks once per\n"
+                                            "second of far-away time, and the roar of the disk. Generated from the physics.");
+        ImGui::BeginDisabled(!g_soundOn);
+        propFloat("Volume", &g_volume, 0.0f, 1.0f);
+        ImGui::EndDisabled();
+        endProps();
+    }
     if (category("HUD") && beginProps("film_hud")) {
         propFloat("Black hole mass", &g_massSun, 5.0f, 1.0e10f, "%.3g suns", ImGuiSliderFlags_Logarithmic,
                   "Only changes the real-world units in the HUD.\nSmall black holes have deadly tides at the horizon, big ones gentle.");
@@ -339,6 +348,7 @@ void panelRenderQueue() {
         ImGui::SliderInt("##samples", &g_exSamples, 1, 64);
         propFloat("Shutter", &g_exShutter, 0.0f, 1.0f, "%.2f", 0, "Fraction of the frame the shutter is open. 0.5 = 180 degrees.");
         propCheck("Ultra geodesics", &g_exUltra, "Smaller integration steps: sharper lensing, slower.");
+        propCheck("Soundtrack", &g_exAudio, "Render the generated soundtrack into the video (AAC 256 kbps).\nIt is also saved as a WAV next to the video.");
         propLabel("ffmpeg", "Path to ffmpeg.exe. Without it, BMP frames are written instead.");
         ImGui::InputText("##ffmpeg", g_ffmpeg, sizeof g_ffmpeg);
         endProps();

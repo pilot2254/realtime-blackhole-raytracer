@@ -16,5 +16,10 @@ float kerrCamSpeed(float f, float fall);        // along l, relative to the Kerr
 float iscoRs(float chi);                        // prograde innermost stable circular orbit, in r_s
 float horizonRs(float chi, float sign);         // +1 outer, -1 inner horizon, in r_s
 
+float camRadius(const CamState& c);             // Boyer-Lindquist radius of the camera, in r_s
+float horizonRadius();                          // outer horizon for the current spin and gravity, in r_s
+float farClockRate(const CamState& c);          // seconds passing far away per camera second; < 0 = none
+float diskProximity(const CamState& c);         // 1 touching the disk, falling off with distance
+
 float viewShift(const CamState& c);             // frequency seen straight ahead / at infinity
 float autoExposure(const CamState& c);          // exposure multiplier from viewShift

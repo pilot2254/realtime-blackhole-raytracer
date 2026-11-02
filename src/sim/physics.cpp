@@ -62,3 +62,38 @@ float autoExposure(const CamState& c) {
     float q = std::max(0.1f, std::min(10.0f, viewShift(c)));
     return std::pow(q, -2.5f * P.autoExposure * P.obsShift);
 }
+
+float camRadius(const CamState& c) {
+    if (P.spin <= 0.0f) return std::max(MIN_DIST, c.dist);
+    float f; V3 l;
+    return ksField(toStd(camBasis(c).pos), f, l);
+}
+
+float horizonRadius() { return horizonRs(P.spin, 1.0f) * std::max(P.gravity, 0.0f); }
+
+// what the HUD's CLOCKS line shows: a hovering observer here ticks slow by sqrt(1 - r_s/r) (Kerr: sqrt(1 - f)),
+// and the camera's speed relative to it adds the special-relativistic factor. Inside the horizon (and in the
+// ergosphere) nothing can hover, so there is no outside clock to compare with.
+float farClockRate(const CamState& c) {
+    if (P.spin > 0.0f) {
+        float f; V3 l;
+        ksField(toStd(camBasis(c).pos), f, l);
+        if (f >= 0.999f) return -1.0f;
+        double s = kerrCamSpeed(f, c.fall), vrel = (s - f) / (1.0 - s * f);
+        return (float)(1.0 / std::sqrt(1.0 - vrel * vrel) / std::sqrt(1.0 - f));
+    }
+    double r = std::max(MIN_DIST, c.dist);
+    if (r <= 1.0005) return -1.0f;
+    double beta = std::sqrt(1.0 / r), v = camRadialVel((float)r, c.fall);
+    double vrel = (v - beta) / (1.0 - v * beta);
+    return (float)(1.0 / std::sqrt(1.0 - vrel * vrel) / std::sqrt(1.0 - 1.0 / r));
+}
+
+float diskProximity(const CamState& c) {
+    if (!P.disk) return 0.0f;
+    V3 p = camBasis(c).pos;
+    float rho = std::sqrt(p.x * p.x + p.z * p.z);
+    float dr = rho < P.diskIn ? P.diskIn - rho : (rho > P.diskOut ? rho - P.diskOut : 0.0f);
+    float d2 = dr * dr + p.y * p.y;
+    return 1.0f / (1.0f + d2 / 6.0f);
+}
