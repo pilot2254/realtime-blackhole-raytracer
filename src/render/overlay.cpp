@@ -109,7 +109,7 @@ void overlayUpdate(Overlay& o, int w, int h, float t, bool film) {
         for (auto& c : g_cues) {
             float fd = (c.style == CUE_TITLE || c.style == CUE_SUBTITLE) ? 1.5f : 0.7f;
             float a  = smoothstepf(c.t0, c.t0 + fd, t) * smoothstepf(c.t1, c.t1 - fd, t);
-            if (a < 0.004f) continue;
+            if (a < 0.004f || c.style == CUE_EHT) continue;
             a = std::floor(a * 128.0f) / 128.0f;
             items.push_back({c.style, a, c.text});
             sig += std::to_string(c.style) + fmt(" %.3f|", a) + c.text;
@@ -143,6 +143,19 @@ void overlayUpdate(Overlay& o, int w, int h, float t, bool film) {
     };
     auto fontPx = [&](int style) { TEXTMETRICW tm; SelectObject(o.dc, o.font[style]); GetTextMetricsW(o.dc, &tm); return tm; };
 
+    // a caption that does not fit in the letterbox bar goes into the picture: lift the HUD above it
+    int captionTop = h;
+    for (auto& it : items) {
+        if (it.style != CUE_CAPTION) continue;
+        TEXTMETRICW tm = fontPx(CUE_CAPTION);
+        RECT rc = {(LONG)(w * 0.14f), 0, (LONG)(w * 0.86f), 0};
+        SelectObject(o.dc, o.font[CUE_CAPTION]); SetTextCharacterExtra(o.dc, 0);
+        std::wstring s = widen(it.text);
+        DrawTextW(o.dc, s.c_str(), -1, &rc, DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+        int th = rc.bottom - rc.top;
+        if (bar < th + tm.tmHeight * 0.6f) captionTop = std::min(captionTop, (int)(h - bar - ph * 0.07f - th));
+    }
+
     for (auto& it : items) {
         std::wstring s = widen(it.text);
         TEXTMETRICW tm = fontPx(it.style);
@@ -171,7 +184,8 @@ void overlayUpdate(Overlay& o, int w, int h, float t, bool film) {
         } break;
         case CUE_HUD: {
             int cw = tm.tmAveCharWidth, x = (int)(w * 0.045f);
-            int y = (int)(h - bar - ph * 0.07f - lh * 1.25f * hud.size());
+            int bottom = std::min((int)(h - bar - ph * 0.07f), captionTop - lh);
+            int y = (int)(bottom - lh * 1.25f * hud.size());
             for (auto& l : hud) {
                 draw(it.style, it.a * 0.5f, {x, y, w, y + lh * 2}, DT_LEFT | DT_SINGLELINE, widen(l.first), 0);
                 draw(it.style, it.a * 0.95f, {x + cw * 13, y, w, y + lh * 2}, DT_LEFT | DT_SINGLELINE, widen(l.second), 0);

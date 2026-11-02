@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include "core/math.h"
+#include "sim/scene.h"
 
 std::vector<Key> g_keys;
 std::vector<Cue> g_cues;
@@ -65,6 +67,7 @@ bool saveSequence(const char* path) {
     std::fprintf(f, "fade %f %f %f\n", g_fadeIn, g_fadeOut, g_blackAt);
     std::fprintf(f, "# cue start end style(0 title, 1 subtitle, 2 caption, 3 chapter, 4 HUD) text\n");
     for (auto& c : g_cues) std::fprintf(f, "cue %f %f %d %s\n", c.t0, c.t1, c.style, c.text.c_str());
+    saveObjects(f);
     std::fclose(f);
     return true;
 }
@@ -73,11 +76,16 @@ bool loadSequence(const char* path) {
     if (!f) return false;
     std::vector<Key> keys;
     std::vector<Cue> cues;
+    std::vector<SceneObject> objects;
+    bool haveObjects = false;
     char line[1024];
     while (std::fgets(line, sizeof line, f)) {
         line[std::strcspn(line, "\r\n")] = 0;
-        Key k; Cue c; int n = 0;
-        if (std::sscanf(line, "cue %f %f %d %n", &c.t0, &c.t1, &c.style, &n) == 3 && n > 0) {
+        Key k; Cue c; SceneObject o; int n = 0;
+        if (std::strncmp(line, "obj ", 4) == 0) {
+            haveObjects = true;
+            if (parseObjectLine(line, o)) objects.push_back(o);
+        } else if (std::sscanf(line, "cue %f %f %d %n", &c.t0, &c.t1, &c.style, &n) == 3 && n > 0) {
             c.style = std::max(0, std::min(CUE_STYLES - 1, c.style));
             c.text = line + n;
             cues.push_back(c);
@@ -91,5 +99,13 @@ bool loadSequence(const char* path) {
     if (keys.empty()) return false;
     g_keys = keys; sortKeys();
     g_cues = cues;
+    if (haveObjects) g_objects = objects;                   // older files keep the current objects
     return true;
+}
+
+float cueLevel(int style, float t) {
+    float level = 0.0f;
+    for (const Cue& c : g_cues)
+        if (c.style == style) level = std::max(level, smoothstepf(c.t0, c.t0 + 1.2f, t) * smoothstepf(c.t1, c.t1 - 1.2f, t));
+    return level;
 }

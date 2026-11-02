@@ -81,3 +81,4 @@ void u1f(GLuint p, const char* n, float x)                   { p_glUniform1f(p_g
 void u2f(GLuint p, const char* n, float x, float y)          { p_glUniform2f(p_glGetUniformLocation(p, n), x, y); }
 void u3f(GLuint p, const char* n, float x, float y, float z) { p_glUniform3f(p_glGetUniformLocation(p, n), x, y, z); }
 void u1i(GLuint p, const char* n, int x)                     { p_glUniform1i(p_glGetUniformLocation(p, n), x); }
+void u4fv(GLuint p, const char* n, int count, const float* v) { p_glUniform4fv(p_glGetUniformLocation(p, n), count, v); }

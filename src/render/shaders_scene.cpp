@@ -212,6 +212,157 @@ void shadeDisk(vec3 hit, float r, float s, inout vec3 col, inout float T) {
     T   *= 1.0 - clamp(pow(x, 1.1) * edge * tex * uDiskOpacity, 0.0, 0.95);
 }
 
+// ------------------------------------------------------------------ scene objects
+// Every object is tested against the straight piece of the bent ray between two integration steps, so
+// it is lensed like everything else (and shows up in secondary images). World coordinates.
+//   a: centre.xyz, radius      b: type, temperature, brightness, ship spin angle / jet length
+//   c: colour.rgb, jet speed   v: hot-spot velocity, or the ship / planet axis
+const int MAX_OBJ = 8;
+uniform int  uObjCount;
+uniform vec4 uObjA[MAX_OBJ];
+uniform vec4 uObjB[MAX_OBJ];
+uniform vec4 uObjC[MAX_OBJ];
+uniform vec4 uObjV[MAX_OBJ];
+
+// first point of segment a + s d (s in [0, 1]) inside the sphere, or -1
+float segSphere(vec3 a, vec3 d, vec3 c, float R) {
+    vec3 m = a - c;
+    float A = dot(d, d), B = dot(m, d), C = dot(m, m) - R * R;
+    float disc = B * B - A * C;
+    if (disc < 0.0) return -1.0;
+    float s = (-B - sqrt(disc)) / A;
+    if (s > 1.0) return -1.0;
+    if (s < 0.0) return (C < 0.0) ? 0.0 : -1.0;
+    return s;
+}
+
+// the Endurance: twelve modules on a ring around a hub, four spokes. Units of its radius, axis = z.
+float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float shipSDF(vec3 p) {
+    float ang = atan(p.y, p.x);
+    float a = (floor(ang / (PI / 6.0)) + 0.5) * (PI / 6.0);
+    vec3 q = vec3(cos(a) * p.x + sin(a) * p.y, -sin(a) * p.x + cos(a) * p.y, p.z);
+    float module = sdBox(q - vec3(1.0, 0.0, 0.0), vec3(0.11, 0.17, 0.09)) - 0.01;
+    float ring = length(vec2(length(p.xy) - 1.0, p.z)) - 0.03;
+    float hub = sdBox(p, vec3(0.12, 0.12, 0.24)) - 0.02;
+    float b4 = floor(ang / (PI * 0.5) + 0.5) * (PI * 0.5);
+    vec3 s = vec3(cos(b4) * p.x + sin(b4) * p.y, -sin(b4) * p.x + cos(b4) * p.y, p.z);
+    float spoke = sdBox(s - vec3(0.55, 0.0, 0.0), vec3(0.45, 0.018, 0.018));
+    return min(min(module, ring), min(hub, spoke));
+}
+void shipFrame(int i, out vec3 X, out vec3 Y, out vec3 Z) {
+    Z = normalize(uObjV[i].xyz);
+    vec3 helper = abs(Z.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 x0 = normalize(cross(helper, Z)), y0 = cross(Z, x0);
+    float sa = sin(uObjB[i].w), ca = cos(uObjB[i].w);
+    X = x0 * ca + y0 * sa; Y = -x0 * sa + y0 * ca;
+}
+float shipLocalSDF(int i, vec3 p, vec3 X, vec3 Y, vec3 Z) {
+    vec3 m = p - uObjA[i].xyz;
+    return shipSDF(vec3(dot(m, X), dot(m, Y), dot(m, Z)) / uObjA[i].w) * uObjA[i].w;
+}
+// sphere-trace the ship along the segment; s = hit parameter
+bool shipHit(int i, vec3 a, vec3 d, out float s) {
+    float s0 = segSphere(a, d, uObjA[i].xyz, uObjA[i].w * 1.35);
+    if (s0 < 0.0) return false;
+    vec3 X, Y, Z; shipFrame(i, X, Y, Z);
+    float L = length(d), t = s0 * L;
+    vec3 dir = d / L;
+    for (int k = 0; k < 48; k++) {
+        float dist = shipLocalSDF(i, a + dir * t, X, Y, Z);
+        if (dist < 0.002 * uObjA[i].w) { s = t / L; return true; }
+        t += dist * 0.9;
+        if (t > L) return false;
+    }
+    return false;
+}
+
+// lit by the hot inner disk around the hole
+vec3 surfaceLight(vec3 p, vec3 n, vec3 V, vec3 albedo, float gloss, float specAmt) {
+    vec3 L = normalize(-p + vec3(0.0, -0.15 * length(p), 0.0));
+    vec3 H = normalize(L + V);
+    float diff = max(dot(n, L), 0.0) * 0.85 + 0.04;
+    float spec = pow(max(dot(n, H), 0.0), gloss) * specAmt;
+    float rim  = pow(1.0 - max(dot(n, V), 0.0), 3.0) * max(dot(n, L) + 0.4, 0.0) * 0.2;
+    return (albedo * diff + vec3(1.0, 0.86, 0.7) * spec + vec3(0.55, 0.65, 0.8) * rim) * 1.8;
+}
+
+vec3 shadePlanet(int i, vec3 hp, vec3 V) {
+    vec3 c = uObjA[i].xyz;
+    vec3 n = normalize(hp - c);
+    vec3 q = n * 7.0 + vec3(0.0, uTime * 0.04, 0.0);                    // swell that drifts with time
+    vec3 nw = normalize(n + 0.22 * (vec3(fbm(q + 3.1, 3), fbm(q + 7.3, 3), fbm(q + 1.7, 3)) - 0.5));
+    float foam = smoothstep(0.62, 0.8, fbm(q * 2.3, 4));
+    vec3 albedo = mix(uObjC[i].rgb, vec3(0.75, 0.8, 0.82), foam * 0.5);
+    return surfaceLight(hp, nw, V, albedo, 80.0, 1.6);
+}
+
+vec3 shadeShip(int i, vec3 hp, vec3 V) {
+    vec3 X, Y, Z; shipFrame(i, X, Y, Z);
+    const float e = 0.002;
+    float R = uObjA[i].w;
+    vec3 n = normalize(vec3(
+        shipLocalSDF(i, hp + vec3(e, 0, 0) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(e, 0, 0) * R, X, Y, Z),
+        shipLocalSDF(i, hp + vec3(0, e, 0) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(0, e, 0) * R, X, Y, Z),
+        shipLocalSDF(i, hp + vec3(0, 0, e) * R, X, Y, Z) - shipLocalSDF(i, hp - vec3(0, 0, e) * R, X, Y, Z)));
+    vec3 m = (hp - uObjA[i].xyz) / R;
+    float panel = 0.85 + 0.15 * step(0.5, fract(dot(m, X) * 9.0)) * step(0.5, fract(dot(m, Z) * 9.0));
+    return surfaceLight(hp, n, V, uObjC[i].rgb * panel, 40.0, 0.9);
+}
+
+// adds glowing objects along the segment; returns true when an opaque object was hit (T becomes 0)
+bool objectsAlong(vec3 a, vec3 b, float qObs, inout vec3 col, inout float T) {
+    vec3 d = b - a;
+    float L2 = dot(d, d), best = 2.0;
+    int hit = -1;
+    vec3 n = -d * inversesqrt(L2);                                        // direction the photon travels
+    for (int i = 0; i < MAX_OBJ; i++) {
+        if (i >= uObjCount) break;
+        int type = int(uObjB[i].x + 0.5);
+        vec3 c = uObjA[i].xyz;
+        float R = uObjA[i].w;
+        if (type == 0) {
+            // hot spot: a blob of superheated gas, Doppler boosted by its orbit
+            vec3 m = a - c;
+            float s = clamp(-dot(m, d) / L2, 0.0, 1.0);
+            vec3 pc = m + d * s;
+            float dist2 = dot(pc, pc);
+            if (dist2 < 9.0 * R * R) {
+                vec3 beta = uObjV[i].xyz;
+                float gam = inversesqrt(1.0 - dot(beta, beta));
+                float D = mix(1.0, 1.0 / (gam * (1.0 - dot(beta, n))), uDoppler);
+                float g = mix(1.0, sqrt(max(1.0 - RS / max(length(c), 1.01), 0.0)), uRedshift);
+                float sh = D * g * qObs;
+                float em = exp(-dist2 / (R * R)) * sqrt(L2) / R * 0.35 * uObjB[i].z;
+                col += T * blackbody(uObjB[i].y * sh) * em * min(sh * sh * sh * sh, 30.0);
+            }
+        } else if (type == 3) {
+            // relativistic jet along the spin axis, both ways; beaming makes the approaching one brighter
+            vec3 mid = a + 0.5 * d;
+            float h = abs(mid.y), len = uObjB[i].w, w = R * (0.3 + h * 0.12);
+            if (h > 1.0 && h < len) {
+                float rho2 = mid.x * mid.x + mid.z * mid.z;
+                float beta = uObjC[i].w, gam = inversesqrt(1.0 - beta * beta);
+                float D = 1.0 / (gam * (1.0 - beta * sign(mid.y) * n.y));
+                float em = exp(-rho2 / (w * w)) * smoothstep(1.0, 2.0, h) * exp(-h / (0.4 * len)) * sqrt(L2) / w;
+                col += T * blackbody(uObjB[i].y * D * qObs) * em * uObjB[i].z * 0.15 * min(D * D * D, 20.0);
+            }
+        } else if (type == 1) {
+            float s = segSphere(a, d, c, R);
+            if (s >= 0.0 && s < best) { best = s; hit = i; }
+        } else if (type == 2) {
+            float s;
+            if (shipHit(i, a, d, s) && s < best) { best = s; hit = i; }
+        }
+    }
+    if (hit < 0) return false;
+    vec3 hp = a + d * best;
+    int type = int(uObjB[hit].x + 0.5);
+    col += T * (type == 1 ? shadePlanet(hit, hp, n) : shadeShip(hit, hp, n)) * min(qObs * qObs, 4.0);
+    T = 0.0;
+    return true;
+}
+
 void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dirOut, out float escaped) {
     vec3 p = ro, v = rd;
     vec3 L = cross(p, v);
@@ -234,6 +385,7 @@ void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dir
         v += (-k * p / (r2 * r2 * r)) * (0.5 * dt);
 
         col += T * vec3(1.0, 0.55, 0.25) * (uGlow * dt * length(v) / max(r2 * r2, 1.0));
+        if (uObjCount > 0 && objectsAlong(pp, p, qObs, col, T)) { dirOut = normalize(v); return; }
 
         if (uDiskOn > 0.5 && (pp.y > 0.0) != (p.y > 0.0)) {
             float f  = pp.y / (pp.y - p.y);
@@ -330,6 +482,7 @@ void traceKerr(vec3 x, vec3 p, float qObs, out vec3 col, out float T, out vec3 d
 
         float stepLen = length(xn - x);
         if (r > rH) col += T * vec3(1.0, 0.55, 0.25) * (uGlow * stepLen / max(r * r * r * r * 16.0 * KM * KM * KM * KM, 1.0));
+        if (uObjCount > 0 && objectsAlong(fromStd(x), fromStd(xn), qObs, col, T)) return;
 
         if (uDiskOn > 0.5 && (x.z > 0.0) != (xn.z > 0.0)) {
             vec3 hit = mix(x, xn, x.z / (x.z - xn.z));

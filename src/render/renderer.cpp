@@ -2,6 +2,8 @@
 #include "render/shaders.h"
 #include "sim/params.h"
 #include "sim/physics.h"
+#include "sim/scene.h"
+#include "film/sequence.h"
 
 GLuint g_progScene, g_progDown, g_progUp, g_progComp, g_progCopy;
 
@@ -13,7 +15,7 @@ void createPrograms() {
     g_progCopy  = makeProgram(VS_FULLSCREEN, {FS_COPY}, "copy.frag");
 }
 
-void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx, float jy, float step) {
+void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx, float jy, float step, bool film) {
     GLuint p = g_progScene;
     p_glUseProgram(p);
     u2f(p, "uRes", (float)w, (float)h);
@@ -45,6 +47,22 @@ void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx, float
     u1f(p, "uMilky", P.milky);
     u1f(p, "uNebula", P.nebula);
     u1f(p, "uGalaxy", P.galaxy);
+
+    ObjectGPU obj[MAX_OBJECTS];
+    int n = gatherObjects(t, cf, film, obj);
+    float A[4 * MAX_OBJECTS] = {}, B[4 * MAX_OBJECTS] = {}, C[4 * MAX_OBJECTS] = {}, V[4 * MAX_OBJECTS] = {};
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < 4; k++) { A[4 * i + k] = obj[i].a[k]; B[4 * i + k] = obj[i].b[k]; C[4 * i + k] = obj[i].c[k]; V[4 * i + k] = obj[i].v[k]; }
+    u1i(p, "uObjCount", n);
+    u4fv(p, "uObjA", MAX_OBJECTS, A);
+    u4fv(p, "uObjB", MAX_OBJECTS, B);
+    u4fv(p, "uObjC", MAX_OBJECTS, C);
+    u4fv(p, "uObjV", MAX_OBJECTS, V);
+}
+
+float telescopeAmount(float t, bool film) {
+    float cue = film && g_cuesOn ? cueLevel(CUE_EHT, t) : 0.0f;
+    return std::max(P.telescope, cue);
 }
 
 void runBloom(const Target& src, std::vector<Target>& mips) {
@@ -77,7 +95,7 @@ void runBloom(const Target& src, std::vector<Target>& mips) {
 }
 
 void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<Target>& mips, float t, float fade,
-                      const Overlay& ov, float exposure) {
+                      const Overlay& ov, float exposure, float telescope) {
     p_glBindFramebuffer(K_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
     GLuint p = g_progComp;
@@ -98,6 +116,11 @@ void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<
     u1f(p, "uCA", P.ca);
     u1f(p, "uGrain", P.grain);
     u1f(p, "uFade", fade);
+    const Target& blur = mips.empty() ? scene : mips[std::min<size_t>(3, mips.size() - 1)];
+    bindTex(3, blur.tex);
+    u1i(p, "uBlur", 3);
+    u2f(p, "uBlurTexel", 1.0f / blur.w, 1.0f / blur.h);
+    u1f(p, "uEHT", telescope);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     p_glActiveTexture(K_TEXTURE0);
 }

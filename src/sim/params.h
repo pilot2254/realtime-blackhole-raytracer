@@ -10,5 +10,6 @@ struct Params {
     float spin = 0.6f; bool iscoEdge = true;            // a/M; Interstellar's renders used 0.6
     float stars = 1.0f, milky = 1.0f, nebula = 1.0f, galaxy = 1.0f;
     float exposure = 1.0f, bloom = 0.06f, vignette = 0.45f, ca = 0.010f, grain = 2.5f;
+    float telescope = 0.0f;                             // 0..1 Event Horizon Telescope view
 };
 extern Params P;

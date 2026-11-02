@@ -250,21 +250,22 @@ int main() {
             float t = currentTime();
             if (g_showUI && (view8.w != outW || view8.h != outH)) { freeTarget(view8); view8 = makeTarget(outW, outH, false); }
             // a still picture is refined at full resolution; otherwise the fast preview at render scale
-            const Target* img = refineUpdate(outW, outH, cf, t, g_refineOn);
+            bool film = g_camMode == CAM_SEQUENCE;
+            const Target* img = refineUpdate(outW, outH, cf, t, film, g_refineOn);
             std::vector<Target>* imgMips = &refineMips();
             if (!img) {
                 int sw = std::max(1, (int)(outW * P.renderScale)), sh = std::max(1, (int)(outH * P.renderScale));
                 if (scene.w != sw || scene.h != sh) { freeTarget(scene); scene = makeTarget(sw, sh); buildMips(mips, sw, sh); }
                 p_glBindFramebuffer(K_FRAMEBUFFER, scene.fbo);
                 glViewport(0, 0, scene.w, scene.h);
-                setSceneUniforms(scene.w, scene.h, cf, t, 0, 0, P.ultra ? 0.012f : 0.03f);
+                setSceneUniforms(scene.w, scene.h, cf, t, 0, 0, P.ultra ? 0.012f : 0.03f, film);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
                 runBloom(scene, mips);
                 img = &scene; imgMips = &mips;
             }
             overlayUpdate(g_ovView, outW, outH, g_playhead, g_camMode == CAM_SEQUENCE);
             composite(g_showUI ? view8.fbo : 0, outW, outH, *img, *imgMips, t, currentFade(), g_ovView,
-                      P.exposure * autoExposure(cam));
+                      P.exposure * autoExposure(cam), telescopeAmount(t, film));
             drewToWindow = !g_showUI;
         }
         p_glBindFramebuffer(K_FRAMEBUFFER, 0);
@@ -282,7 +283,7 @@ int main() {
         // ---- sound: the organ follows the camera live; silent while paused or rendering
         {
             bool running = !g_job.active && (g_camMode == CAM_SEQUENCE ? g_playing : !g_paused);
-            SoundControls ctl = soundControls(currentCam(), currentFade());
+            SoundControls ctl = soundControls(currentCam(), currentFade(), currentTime(), g_camMode == CAM_SEQUENCE);
             ctl.level *= (g_soundOn && running) ? g_volume : 0.0f;
             audioPump(currentTime(), running, ctl);
         }

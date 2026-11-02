@@ -4,7 +4,7 @@ REM MSVC: run from "x64 Native Tools Command Prompt for VS".  MinGW: run from a 
 set IMGUI=imgui
 set APP=src\main.cpp src\app\app.cpp ^
     src\core\gl.cpp src\core\util.cpp ^
-    src\sim\camera.cpp src\sim\physics.cpp ^
+    src\sim\camera.cpp src\sim\physics.cpp src\sim\scene.cpp ^
     src\film\sequence.cpp src\film\gargantua_film.cpp ^
     src\render\shaders_scene.cpp src\render\shaders_post.cpp src\render\renderer.cpp src\render\overlay.cpp src\render\export.cpp src\render\refine.cpp ^
     src\audio\synth.cpp src\audio\audio.cpp ^

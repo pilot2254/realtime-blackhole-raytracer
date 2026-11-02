@@ -6,7 +6,7 @@
 
 struct Key { float t; CamState c; };
 
-enum { CUE_TITLE = 0, CUE_SUBTITLE, CUE_CAPTION, CUE_CHAPTER, CUE_HUD, CUE_STYLES };
+enum { CUE_TITLE = 0, CUE_SUBTITLE, CUE_CAPTION, CUE_CHAPTER, CUE_HUD, CUE_EHT, CUE_STYLES };   // HUD, EHT: effects, no text
 struct Cue { float t0, t1; int style; std::string text; };
 
 extern std::vector<Key> g_keys;
@@ -26,3 +26,4 @@ void     sortKeys();
 void     addKey(float t, CamState c);
 bool     saveSequence(const char* path);
 bool     loadSequence(const char* path);
+float    cueLevel(int style, float t);          // 0..1, with the same fades the overlay uses

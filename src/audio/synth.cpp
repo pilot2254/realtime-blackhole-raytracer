@@ -4,9 +4,10 @@
 #include "core/math.h"
 #include "sim/params.h"
 #include "sim/physics.h"
+#include "sim/scene.h"
 
 // ---------------------------------------------------------------- what the physics says
-SoundControls soundControls(const CamState& c, float fade) {
+SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     SoundControls s;
     s.level = fade;
     float r = camRadius(c), rh = std::max(horizonRadius(), 1e-3f);
@@ -16,6 +17,14 @@ SoundControls soundControls(const CamState& c, float fade) {
     s.tickLevel = smoothstepf(0.22f, 0.42f, s.tension);             // the clock fades in below ~10 r_s
     s.roar  = diskProximity(c);
     s.shift = std::max(0.3f, std::min(4.0f, viewShift(c)));
+    // scene objects nearby: a ship's engines, a planet's ocean
+    CamFrame cf = camBasis(c);
+    for (const SceneObject& o : g_objects) {
+        if (!objectActive(o, t, film) || (o.type != SO_SHIP && o.type != SO_PLANET)) continue;
+        float d = len(objectPosition(o, t, cf) - cf.pos) - o.size;
+        if (o.type == SO_SHIP)   s.hum   = std::max(s.hum, smoothstepf(4.0f, 0.6f, d));
+        if (o.type == SO_PLANET) s.ocean = std::max(s.ocean, smoothstepf(3.5f, 0.8f, d));
+    }
     return s;
 }
 
@@ -106,6 +115,8 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         cur.tickLevel += (target.tickLevel - cur.tickLevel) * k;
         cur.roar      += (target.roar - cur.roar) * k;
         cur.shift     += (target.shift - cur.shift) * k;
+        cur.hum       += (target.hum - cur.hum) * k;
+        cur.ocean     += (target.ocean - cur.ocean) * k;
         cur.tickRate   = target.tickRate;
         float levelFrom = cur.level;
         cur.level     += (target.level - cur.level) * kl;
@@ -158,10 +169,15 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 if (tickPhase >= 1.0) { tickPhase -= std::floor(tickPhase); tickEnv = 1.0f; }
             }
             float nz = noise();
-            hpOut = 0.95f * (hpOut + nz - hpPrev); hpPrev = nz;       // high-passed noise for the click
-            float click = tickEnv * (0.6f * hpOut + 0.4f * std::sin(2 * PI * 1800.0f * (float)(i + start) / RATE)) * 0.3f * cur.tickLevel;
-            tickEnv *= 0.9931f;                                       // ~3 ms decay
-            L += click; R += click * 0.85f;
+            hpOut = 0.95f * (hpOut + nz - hpPrev); hpPrev = nz;
+            if (tickEnv == 1.0f) tickAge = 0.0f;
+            // a soft wooden knock: low sine with a touch of filtered noise, ~9 ms decay, mostly heard in the hall
+            float knock = std::sin(2 * PI * 620.0f * tickAge / RATE) + 0.15f * hpOut;
+            tickLp += (knock - tickLp) * 0.35f;
+            float click = tickEnv * tickLp * 0.09f * cur.tickLevel;
+            tickEnv *= 0.99769f;
+            tickAge += 1.0f;
+            L += click; R += click * 0.9f;
 
             // the disk's roar: brown noise, brighter when blueshifted
             float fc = std::min(500.0f, 70.0f * cur.shift), alpha = 1.0f - std::exp(-2 * PI * fc / RATE);
@@ -171,6 +187,30 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
             }
             float roar = 0.22f * cur.roar;                            // a bed under the organ, not over it
             L += roarLp[0] * roar; R += roarLp[1] * roar;
+
+            // a ship's engines: low detuned saws, slowly throbbing
+            if (cur.hum > 1e-3f) {
+                const float hz[3] = {41.2f, 41.5f, 82.4f};
+                float saw = 0;
+                for (int k3 = 0; k3 < 3; k3++) {
+                    humPhase[k3] += hz[k3] / RATE; humPhase[k3] -= (int)humPhase[k3];
+                    saw += (2.0f * humPhase[k3] - 1.0f) * (k3 == 2 ? 0.5f : 1.0f);
+                }
+                float throb = 0.75f + 0.25f * std::sin(2 * PI * 0.5f * (float)(ts + i / (double)RATE));
+                for (int ch = 0; ch < 2; ch++) humLp[ch] += (saw - humLp[ch]) * (ch ? 0.030f : 0.034f);
+                L += humLp[0] * 0.16f * cur.hum * throb; R += humLp[1] * 0.16f * cur.hum * throb;
+            }
+            // a planet's ocean: noise in slow swells
+            if (cur.ocean > 1e-3f) {
+                float swell = 0.5f + 0.5f * std::sin(2 * PI * 0.09f * (float)(ts + i / (double)RATE));
+                swell *= swell;
+                for (int ch = 0; ch < 2; ch++) {
+                    oceanLp[ch]  += (noise() - oceanLp[ch]) * 0.08f;
+                    oceanLp2[ch] += (oceanLp[ch] - oceanLp2[ch]) * 0.08f;
+                }
+                float o = 0.5f * cur.ocean * (0.25f + 0.75f * swell);
+                L += oceanLp2[0] * o; R += oceanLp2[1] * o;
+            }
 
             // hall, then the master level (after the reverb, so a cut to black is true silence), soft clip
             float wetL = reverb(0, (L + R) * 0.5f + L * 0.2f), wetR = reverb(1, (L + R) * 0.5f + R * 0.2f);

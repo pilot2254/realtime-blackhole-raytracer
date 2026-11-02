@@ -222,7 +222,7 @@ static void drawStatusBar(float fps, int renderW, int renderH) {
 // ---------------------------------------------------------------- dock layout
 static void drawDockspace() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGuiID id = ImGui::GetID("GargantuaDock_v5");
+    ImGuiID id = ImGui::GetID("GargantuaDock_v6");
     if (g_resetLayout || !ImGui::DockBuilderGetNode(id)) {
         g_resetLayout = false;
         ImGui::DockBuilderRemoveNode(id);
@@ -231,7 +231,7 @@ static void drawDockspace() {
         ImGuiID center = id;
         ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.23f, nullptr, &center);
         ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.27f, nullptr, &center);
-        ImGuiID details = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.70f, nullptr, &right);
+        ImGuiID details = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.58f, nullptr, &right);
         ImGui::DockBuilderDockWindow("Viewport", center);
         ImGui::DockBuilderDockWindow("Movie Render Queue", bottom);
         ImGui::DockBuilderDockWindow("Sequencer", bottom);
@@ -309,6 +309,12 @@ void panelViewport(GLuint tex, int renderW, int renderH) {
     ImGui::SameLine(0, 4);
     if (ImGui::Button(g_letterboxOn ? "2.39 : 1" : "16 : 9")) g_letterboxOn = !g_letterboxOn;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Letterbox on / off");
+    ImGui::SameLine(0, 4);
+    bool eht = P.telescope > 0.5f;
+    if (eht) ImGui::PushStyleColor(ImGuiCol_Button, rgb(205, 110, 30, 0.85f));
+    if (ImGui::Button("EHT")) P.telescope = eht ? 0.0f : 1.0f;
+    if (eht) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Event Horizon Telescope view: what an Earth-sized radio telescope would see");
     ImGui::EndDisabled();
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);

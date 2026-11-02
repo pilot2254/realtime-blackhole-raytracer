@@ -14,8 +14,11 @@ struct SoundControls {
     float tickLevel = 0.0f;
     float roar = 0.0f;          // disk proximity
     float shift = 1.0f;         // frequency shift straight ahead (brightens the roar)
+    float hum = 0.0f;           // a ship close by
+    float ocean = 0.0f;         // a planet's ocean close by
 };
-SoundControls soundControls(const CamState& c, float fade);
+// t: film time when film = true, else free-camera time (scene objects move with it)
+SoundControls soundControls(const CamState& c, float fade, float t, bool film);
 
 class Synth {
 public:
@@ -33,7 +36,8 @@ private:
     SoundControls cur;
     float subPhase[2] = {0, 0};
     double tickPhase = 0;
-    float tickEnv = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
+    float tickEnv = 0, tickAge = 0, tickLp = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
+    float humPhase[3] = {0, 0, 0}, humLp[2] = {0, 0}, oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
     uint32_t rng = 0x9E3779B9u;
     Comb comb[2][4];
     Allpass ap[2][2];

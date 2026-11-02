@@ -63,6 +63,12 @@ uniform float uFade;
 uniform sampler2D uOverlay;   // titles / captions / HUD, brightness = coverage, rows top-down
 uniform float uOverlayOn;
 uniform float uBar;           // letterbox bar height in pixels
+uniform float uEHT;           // 0..1 blend to the Event Horizon Telescope view
+uniform sampler2D uBlur;      // deep level of the bloom pyramid: a telescope-sized blur
+uniform vec2  uBlurTexel;
+
+// the "afmhot" colour map of the EHT images
+vec3 afmhot(float x) { return clamp(vec3(2.0 * x, 2.0 * x - 0.5, 2.0 * x - 1.0), 0.0, 1.0); }
 
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -81,6 +87,16 @@ void main() {
     c *= 1.0 - uVignette * pow(length(cc * vec2(1.0, 1.15)) * 1.25, 2.6);
     c *= uFade;
     c = pow(c, vec3(1.0 / 2.2));
+    if (uEHT > 0.0) {
+        // a radio telescope the size of the Earth still only resolves a blur of the photon ring
+        vec3 b = vec3(0.0);
+        for (int j = -1; j <= 1; j++)
+            for (int i = -1; i <= 1; i++)
+                b += texture(uBlur, uv + vec2(i, j) * uBlurTexel * 1.5).rgb * ((i == 0 ? 2.0 : 1.0) * (j == 0 ? 2.0 : 1.0));
+        float lum = dot(b / 16.0, vec3(0.3, 0.55, 0.15)) * uExposure;
+        // the radio sky behind is dark: only the bright ring survives
+        c = mix(c, afmhot(1.0 - exp(-max(lum - 0.18, 0.0) * 1.5)), uEHT);
+    }
     c += (hash(gl_FragCoord.xy + fract(uTime) * 917.0) - 0.5) * (uGrain / 255.0);
     if (gl_FragCoord.y < uBar || gl_FragCoord.y > uRes.y - uBar) c = vec3(0.0);
     if (uOverlayOn > 0.5) {

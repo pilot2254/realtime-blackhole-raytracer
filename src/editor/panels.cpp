@@ -11,10 +11,13 @@
 #include "render/export.h"
 #include "sim/params.h"
 #include "sim/physics.h"
+#include "sim/scene.h"
+#include <cstring>
+#include <string>
 
 namespace ed {
 
-int selKind = SEL_OBJECT, selObject = OBJ_BLACKHOLE, selKey = -1, selCue = -1;
+int selKind = SEL_OBJECT, selObject = OBJ_BLACKHOLE, selKey = -1, selCue = -1, selScene = -1;
 
 struct ObjectInfo { const char* name; const char* type; int icon; ImU32 color; };
 static const ObjectInfo OBJECTS[OBJ_COUNT] = {
@@ -25,12 +28,57 @@ static const ObjectInfo OBJECTS[OBJ_COUNT] = {
     {"Post Process",   "Volume",         IC_POST,      IM_COL32(150, 220, 200, 255)},
     {"Film",           "Level Sequence", IC_FILM,      IM_COL32(220, 150, 220, 255)},
 };
-static const char* CUE_NAMES[CUE_STYLES] = {"Title", "Subtitle", "Caption", "Chapter", "HUD"};
+static const char* CUE_NAMES[CUE_STYLES] = {"Title", "Subtitle", "Caption", "Chapter", "HUD", "Telescope view"};
+
+// ---------------------------------------------------------------- scene objects (add / rename / duplicate / delete)
+static int sceneIcon(int type) { return type == SO_HOTSPOT ? IC_HOTSPOT : type == SO_PLANET ? IC_PLANET : type == SO_SHIP ? IC_SHIP : IC_JET; }
+static ImU32 sceneColor(int type) {
+    return type == SO_HOTSPOT ? IM_COL32(255, 110, 70, 255) : type == SO_PLANET ? IM_COL32(120, 175, 215, 255)
+         : type == SO_SHIP ? IM_COL32(215, 215, 210, 255) : IM_COL32(170, 150, 255, 255);
+}
+static void uniqueName(SceneObject& o) {
+    std::string base = o.name;
+    for (int n = 2; ; n++) {
+        bool taken = false;
+        for (const SceneObject& x : g_objects) if (&x != &o && std::strcmp(x.name, o.name) == 0) taken = true;
+        if (!taken) return;
+        std::snprintf(o.name, sizeof o.name, "%s %d", base.c_str(), n);
+    }
+}
+static void addSceneObject(SceneObject o) {
+    g_objects.push_back(o);
+    uniqueName(g_objects.back());
+    selKind = SEL_SCENE; selScene = (int)g_objects.size() - 1;
+}
+static void deleteSceneObject(int i) {
+    if (i < 0 || i >= (int)g_objects.size()) return;
+    g_objects.erase(g_objects.begin() + i);
+    selKind = SEL_OBJECT; selObject = OBJ_BLACKHOLE;
+}
+static void addMenuItems() {
+    for (int t = 0; t < SO_TYPES; t++) {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float h = ImGui::GetTextLineHeight();
+        ImGui::Dummy(ImVec2(h, h)); ImGui::SameLine();
+        drawIcon(ImGui::GetWindowDrawList(), sceneIcon(t), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.4f, sceneColor(t));
+        if (ImGui::MenuItem(objectTypeName(t))) addSceneObject(makeObject(t));
+    }
+}
 
 // ---------------------------------------------------------------- Outliner
 void panelOutliner() {
     if (!ImGui::Begin("Outliner")) { ImGui::End(); return; }
+    if (toolButton("##add", IC_PLUS, "Add", "Add an object to the scene", false, IM_COL32(120, 200, 120, 255))) ImGui::OpenPopup("add_object");
+    if (ImGui::BeginPopup("add_object")) { addMenuItems(); ImGui::EndPopup(); }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    int traced = 0;
+    for (const SceneObject& o : g_objects) traced += o.visible ? 1 : 0;
+    ImGui::TextDisabled("%d actors", OBJ_COUNT + (int)g_objects.size());
+    if (traced > MAX_OBJECTS) { ImGui::SameLine(); ImGui::TextColored(rgb(240, 160, 90), "only %d visible objects are traced", MAX_OBJECTS); }
+
     ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable;
+    int deleteIndex = -1, duplicateIndex = -1;
     if (ImGui::BeginTable("outliner", 3, tf)) {
         float h = ImGui::GetFrameHeight();
         ImGui::TableSetupScrollFreeze(0, 1);
@@ -38,40 +86,162 @@ void panelOutliner() {
         ImGui::TableSetupColumn("Item Label", ImGuiTableColumnFlags_WidthStretch, 0.6f);
         ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 0.4f);
         ImGui::TableHeadersRow();
-        for (int i = 0; i < OBJ_COUNT; i++) {
-            const ObjectInfo& o = OBJECTS[i];
-            ImGui::PushID(i);
+
+        auto row = [&](int id, bool* vis, const char* tip, bool sel, int icon, ImU32 color, const char* name, const char* type, bool ctx) -> bool {
+            ImGui::PushID(id);
             ImGui::TableNextRow(0, h);
-            // visibility toggle where it means something
             ImGui::TableSetColumnIndex(0);
-            bool* vis = i == OBJ_DISK ? &P.disk : (i == OBJ_FILM ? &g_cuesOn : nullptr);
             ImVec2 p = ImGui::GetCursorScreenPos();
             if (vis) {
                 if (ImGui::InvisibleButton("##eye", ImVec2(h, h))) *vis = !*vis;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == OBJ_DISK ? "Show the accretion disk" : "Show titles, captions and HUD");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
                 drawIcon(ImGui::GetWindowDrawList(), *vis ? IC_EYE : IC_EYE_OFF, ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.3f,
                          *vis ? IM_COL32(190, 190, 190, 255) : IM_COL32(90, 90, 90, 255));
             }
             ImGui::TableSetColumnIndex(1);
-            bool sel = selKind == SEL_OBJECT && selObject == i;
             p = ImGui::GetCursorScreenPos();
             ImGui::PushStyleColor(ImGuiCol_Header, rgb(0, 112, 224, 0.55f));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, sel ? rgb(0, 112, 224, 0.65f) : rgb(255, 255, 255, 0.06f));
-            if (ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, h))) {
-                selKind = SEL_OBJECT; selObject = i;
-            }
+            bool clicked = ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, h));
             ImGui::PopStyleColor(2);
+            if (ctx) ImGui::OpenPopupOnItemClick("ctx", ImGuiPopupFlags_MouseButtonRight);
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            drawIcon(dl, o.icon, ImVec2(p.x + h * 0.45f, p.y + h * 0.5f), h * 0.3f, o.color);
-            dl->AddText(ImVec2(p.x + h * 1.0f, p.y + (h - ImGui::GetTextLineHeight()) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), o.name);
+            drawIcon(dl, icon, ImVec2(p.x + h * 0.45f, p.y + h * 0.5f), h * 0.3f, color);
+            dl->AddText(ImVec2(p.x + h * 1.0f, p.y + (h - ImGui::GetTextLineHeight()) * 0.5f),
+                        ImGui::GetColorU32(vis && !*vis ? ImGuiCol_TextDisabled : ImGuiCol_Text), name);
             ImGui::TableSetColumnIndex(2);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("%s", o.type);
+            ImGui::TextDisabled("%s", type);
+            return clicked;
+        };
+
+        for (int i = 0; i < OBJ_COUNT; i++) {
+            const ObjectInfo& o = OBJECTS[i];
+            bool* vis = i == OBJ_DISK ? &P.disk : (i == OBJ_FILM ? &g_cuesOn : nullptr);
+            const char* tip = i == OBJ_DISK ? "Show the accretion disk" : "Show titles, captions and HUD";
+            if (row(i, vis, tip, selKind == SEL_OBJECT && selObject == i, o.icon, o.color, o.name, o.type, false)) { selKind = SEL_OBJECT; selObject = i; }
+            ImGui::PopID();
+        }
+        for (int i = 0; i < (int)g_objects.size(); i++) {
+            SceneObject& o = g_objects[i];
+            if (row(1000 + i, &o.visible, "Show or hide", selKind == SEL_SCENE && selScene == i, sceneIcon(o.type), sceneColor(o.type),
+                    o.name, objectTypeName(o.type), true)) { selKind = SEL_SCENE; selScene = i; }
+            if (ImGui::BeginPopup("ctx")) {
+                selKind = SEL_SCENE; selScene = i;
+                ImGui::TextDisabled("Rename");
+                ImGui::SetNextItemWidth(200 * g_dpi);
+                if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                ImGui::InputText("##rename", o.name, sizeof o.name);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Duplicate")) duplicateIndex = i;
+                if (ImGui::MenuItem("Delete", "Del")) deleteIndex = i;
+                ImGui::EndPopup();
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
+    if (ImGui::BeginPopupContextWindow("outliner_bg", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        ImGui::TextDisabled("Add");
+        addMenuItems();
+        ImGui::EndPopup();
+    }
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete) && selKind == SEL_SCENE) deleteIndex = selScene;
+    if (duplicateIndex >= 0) { SceneObject copy = g_objects[duplicateIndex]; copy.phase += 0.6f; addSceneObject(copy); }
+    if (deleteIndex >= 0) deleteSceneObject(deleteIndex);
     ImGui::End();
+}
+
+// ---------------------------------------------------------------- Details: scene objects
+static void orbitProps(SceneObject& o) {
+    propFloat("Orbit radius", &o.orbitR, 1.2f, 40.0f, "%.2f r_s", ImGuiSliderFlags_Logarithmic);
+    propAngle("Phase", &o.phase, -360, 360, "Where along the orbit it starts.");
+    propFloat("Orbit speed", &o.speed, -1.0f, 1.0f, "%.3f rad/s", 0, "Cinematic angular speed. The Doppler shift uses the real orbital speed.");
+    propAngle("Inclination", &o.incline, -80, 80, "Tilt of the orbit against the disk.");
+}
+
+static void detailsSceneObject() {
+    if (selScene < 0 || selScene >= (int)g_objects.size()) { selKind = SEL_OBJECT; return; }
+    SceneObject& o = g_objects[selScene];
+    char b[96];
+    if (category("Object") && beginProps("so_obj")) {
+        propLabel("Name");
+        ImGui::InputText("##name", o.name, sizeof o.name);
+        propCheck("Visible", &o.visible);
+        propDrag("Film: shown from", &o.t0, 0.1f, 0.0f, 600.0f, "%.1f s", "While the film plays, the object only appears between these times.\nSet both to 0 to always show it.");
+        propDrag("Film: shown until", &o.t1, 0.1f, 0.0f, 600.0f, o.t1 > o.t0 ? "%.1f s" : "always");
+        endProps();
+    }
+    switch (o.type) {
+    case SO_HOTSPOT:
+        if (category("Orbit") && beginProps("so_orbit")) {
+            orbitProps(o);
+            std::snprintf(b, sizeof b, "%.2f c", std::sqrt(0.5f / std::max(o.orbitR, 1.05f)));
+            propValue("Orbital speed", b, "Real speed of gas on this orbit. It drives the Doppler boost.");
+            endProps();
+        }
+        if (category("Glow") && beginProps("so_glow")) {
+            propFloat("Size", &o.size, 0.05f, 2.0f, "%.2f r_s");
+            propFloat("Temperature", &o.temp, 1500.0f, 20000.0f, "%.0f K", ImGuiSliderFlags_Logarithmic, "Low = red, high = blue-white.");
+            propFloat("Brightness", &o.bright, 0.1f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+            endProps();
+        }
+        break;
+    case SO_PLANET:
+        if (category("Orbit") && beginProps("so_orbit")) {
+            orbitProps(o);
+            float rate = orbitClockRate(o.orbitR);
+            if (rate > 0.0f) std::snprintf(b, sizeof b, "1 h there = %s far away", fmtDuration(3600.0 * rate).c_str());
+            else std::snprintf(b, sizeof b, "no circular orbit here");
+            propValue("Time dilation", b, "For a planet on this orbit around a black hole with the current spin.");
+            if (o.orbitR < iscoRs(P.spin)) propValue("Stability", "inside the ISCO: it would spiral in");
+            endProps();
+        }
+        if (category("Surface") && beginProps("so_surf")) {
+            propFloat("Radius", &o.size, 0.02f, 1.0f, "%.3f r_s", ImGuiSliderFlags_Logarithmic, "Cinematic size: a real planet would be a speck next to Gargantua.");
+            propLabel("Ocean colour");
+            ImGui::ColorEdit3("##ocean", &o.color.x, ImGuiColorEditFlags_NoInputs);
+            endProps();
+        }
+        break;
+    case SO_SHIP:
+        if (category("Motion") && beginProps("so_motion")) {
+            propCheck("Chase the camera", &o.follow, "Fly alongside the camera, entering and leaving with the film window.");
+            if (o.follow) {
+                propDrag("Ahead", &o.offset.x, 0.01f, -5.0f, 10.0f, "%.2f r_s");
+                propDrag("Right", &o.offset.y, 0.01f, -5.0f, 5.0f, "%.2f r_s");
+                propDrag("Up", &o.offset.z, 0.01f, -5.0f, 5.0f, "%.2f r_s");
+            } else {
+                orbitProps(o);
+            }
+            endProps();
+        }
+        if (category("Look") && beginProps("so_look")) {
+            propFloat("Size", &o.size, 0.02f, 1.0f, "%.3f r_s", ImGuiSliderFlags_Logarithmic);
+            propFloat("Ring spin", &o.spin, -2.0f, 2.0f, "%.2f rad/s");
+            propLabel("Hull colour");
+            ImGui::ColorEdit3("##hull", &o.color.x, ImGuiColorEditFlags_NoInputs);
+            endProps();
+        }
+        break;
+    case SO_JET:
+        if (category("Jet") && beginProps("so_jet")) {
+            propFloat("Length", &o.orbitR, 3.0f, 80.0f, "%.1f r_s");
+            propFloat("Width", &o.size, 0.05f, 1.5f, "%.2f r_s");
+            propFloat("Speed", &o.spin, 0.0f, 0.99f, "%.2f c", 0, "Faster jets are beamed harder: the one coming toward us outshines the other.");
+            std::snprintf(b, sizeof b, "%.2f", 1.0f / std::sqrt(1.0f - o.spin * o.spin));
+            propValue("Lorentz factor", b);
+            propFloat("Temperature", &o.temp, 2000.0f, 30000.0f, "%.0f K", ImGuiSliderFlags_Logarithmic);
+            propFloat("Brightness", &o.bright, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+            endProps();
+        }
+        break;
+    }
+    float w = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Duplicate", ImVec2(w, 0))) { SceneObject copy = o; copy.phase += 0.6f; addSceneObject(copy); }
+    ImGui::SameLine();
+    if (ImGui::Button("Delete", ImVec2(w, 0))) deleteSceneObject(selScene);
 }
 
 // ---------------------------------------------------------------- Details: one function per object
@@ -194,6 +364,12 @@ static void detailsPost() {
         propFloat("Film grain", &P.grain, 0.0f, 10.0f);
         endProps();
     }
+    if (category("Telescope view") && beginProps("post_eht")) {
+        propFloat("Event Horizon Telescope", &P.telescope, 0.0f, 1.0f, "%.2f", 0,
+                  "Blur the view to what an Earth-sized radio telescope resolves, in the colours of the real\n"
+                  "M87* and Sagittarius A* images: a glowing ring, brighter where the gas comes toward us.");
+        endProps();
+    }
 }
 
 static void detailsFilm() {
@@ -271,10 +447,11 @@ static void detailsCue() {
         propDrag("Start", &c.t0, 0.05f, 0.0f, 600.0f, "%.2f s");
         propDrag("End", &c.t1, 0.05f, 0.0f, 600.0f, "%.2f s");
         c.t1 = std::max(c.t1, c.t0 + 0.1f);
-        propCombo("Style", &c.style, "Title\0Subtitle\0Caption\0Chapter\0HUD\0");
+        propCombo("Style", &c.style, "Title\0Subtitle\0Caption\0Chapter\0HUD\0Telescope view\0",
+                  "HUD shows the instruments, Telescope view fades to the Event Horizon Telescope look.");
         endProps();
     }
-    if (c.style != CUE_HUD && category("Text")) {
+    if (c.style != CUE_HUD && c.style != CUE_EHT && category("Text")) {
         char buf[1024]; std::snprintf(buf, sizeof buf, "%s", c.text.c_str());
         if (ImGui::InputTextMultiline("##text", buf, sizeof buf, ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4.5f), ImGuiInputTextFlags_WordWrap))
             c.text = buf;
@@ -294,8 +471,13 @@ void panelDetails() {
         icon = IC_KEY; color = g_keys[selKey].c.fall > 0.5f ? IM_COL32(110, 165, 255, 255) : IM_COL32(255, 160, 60, 255);
         std::snprintf(name, sizeof name, "Camera key %d", selKey + 1); type = "Sequencer key";
     } else if (selKind == SEL_CUE && selCue >= 0 && selCue < (int)g_cues.size()) {
-        icon = g_cues[selCue].style == CUE_HUD ? IC_HUD : IC_TEXT; color = IM_COL32(200, 200, 200, 255);
+        int st = g_cues[selCue].style;
+        icon = st == CUE_HUD ? IC_HUD : st == CUE_EHT ? IC_EHT : IC_TEXT; color = IM_COL32(200, 200, 200, 255);
         std::snprintf(name, sizeof name, "%s at %s", CUE_NAMES[g_cues[selCue].style], mmss(g_cues[selCue].t0).c_str()); type = "Sequencer cue";
+    } else if (selKind == SEL_SCENE && selScene >= 0 && selScene < (int)g_objects.size()) {
+        const SceneObject& so = g_objects[selScene];
+        icon = sceneIcon(so.type); color = sceneColor(so.type);
+        std::snprintf(name, sizeof name, "%s", so.name); type = objectTypeName(so.type);
     } else {
         selKind = SEL_OBJECT;
         const ObjectInfo& o = OBJECTS[selObject];
@@ -314,6 +496,7 @@ void panelDetails() {
     ImGui::BeginChild("props");
     if (selKind == SEL_KEY) detailsKey();
     else if (selKind == SEL_CUE) detailsCue();
+    else if (selKind == SEL_SCENE) detailsSceneObject();
     else switch (selObject) {
         case OBJ_BLACKHOLE: detailsBlackHole(); break;
         case OBJ_DISK:      detailsDisk(); break;

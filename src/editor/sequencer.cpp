@@ -12,14 +12,15 @@
 namespace ed {
 
 enum { TRACK_CAMERA, TRACK_TITLES, TRACK_CAPTIONS, TRACK_HUD, TRACK_COUNT };
-static const char* TRACK_NAMES[TRACK_COUNT] = {"Camera", "Titles & chapters", "Captions", "HUD"};
+static const char* TRACK_NAMES[TRACK_COUNT] = {"Camera", "Titles & chapters", "Captions", "HUD & effects"};
 static const int   TRACK_ICONS[TRACK_COUNT] = {IC_CAMERA, IC_TEXT, IC_TEXT, IC_HUD};
-static int cueTrack(int style) { return style == CUE_CAPTION ? TRACK_CAPTIONS : (style == CUE_HUD ? TRACK_HUD : TRACK_TITLES); }
+static int cueTrack(int style) { return style == CUE_CAPTION ? TRACK_CAPTIONS : (style == CUE_HUD || style == CUE_EHT ? TRACK_HUD : TRACK_TITLES); }
 static ImU32 cueColor(int style) {
     switch (style) {
     case CUE_TITLE: case CUE_SUBTITLE: return IM_COL32(176, 140, 70, 255);
     case CUE_CHAPTER:                  return IM_COL32(190, 110, 50, 255);
     case CUE_CAPTION:                  return IM_COL32(70, 105, 160, 255);
+    case CUE_EHT:                      return IM_COL32(205, 120, 40, 255);
     default:                           return IM_COL32(60, 130, 85, 255);
     }
 }
@@ -103,7 +104,9 @@ void panelSequencer() {
         bool sel = selKind == SEL_CUE && selCue == i;
         dl->AddRectFilled(a, b, cueColor(c.style), 3.0f);
         if (sel) dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1), IM_COL32(255, 255, 255, 230), 3.0f, 0, 1.5f);
-        if (c.style != CUE_HUD && c.style != CUE_SUBTITLE && b.x - a.x > 30) {
+        if (c.style == CUE_EHT && b.x - a.x > 30)
+            dl->AddText(ImVec2(a.x + 4, a.y + (b.y - a.y - ImGui::GetTextLineHeight()) * 0.5f), IM_COL32(255, 255, 255, 220), "EHT");
+        if (c.style != CUE_HUD && c.style != CUE_EHT && c.style != CUE_SUBTITLE && b.x - a.x > 30) {
             dl->PushClipRect(a, ImVec2(b.x - 3, b.y), true);
             dl->AddText(ImVec2(a.x + 4, a.y + (b.y - a.y - ImGui::GetTextLineHeight()) * 0.5f), IM_COL32(255, 255, 255, 210), c.text.c_str());
             dl->PopClipRect();

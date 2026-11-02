@@ -32,6 +32,7 @@ typedef char GLch;
     X(void,   glUniform2f, (GLint, GLfloat, GLfloat))                                     \
     X(void,   glUniform3f, (GLint, GLfloat, GLfloat, GLfloat))                            \
     X(void,   glUniform1i, (GLint, GLint))                                                \
+    X(void,   glUniform4fv, (GLint, GLsizei, const GLfloat*))                             \
     X(void,   glGenVertexArrays, (GLsizei, GLuint*))                                      \
     X(void,   glBindVertexArray, (GLuint))                                                \
     X(void,   glGenFramebuffers, (GLsizei, GLuint*))                                      \
@@ -70,3 +71,4 @@ void u1f(GLuint p, const char* n, float x);
 void u2f(GLuint p, const char* n, float x, float y);
 void u3f(GLuint p, const char* n, float x, float y, float z);
 void u1i(GLuint p, const char* n, int x);
+void u4fv(GLuint p, const char* n, int count, const float* v);

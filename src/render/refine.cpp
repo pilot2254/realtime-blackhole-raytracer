@@ -4,6 +4,7 @@
 #include "core/util.h"
 #include "render/renderer.h"
 #include "sim/params.h"
+#include "sim/scene.h"
 
 bool g_refineOn = true;
 
@@ -24,7 +25,7 @@ static uint64_t fnv(const void* p, size_t n, uint64_t h) {
 int refineSamples() { return s_n; }
 std::vector<Target>& refineMips() { return s_mips; }
 
-const Target* refineUpdate(int w, int h, const CamFrame& cf, float t, bool allowed) {
+const Target* refineUpdate(int w, int h, const CamFrame& cf, float t, bool film, bool allowed) {
     // anything that changes the traced image restarts the refinement
     uint64_t key = 1469598103934665603ull;
     key = fnv(&cf, sizeof cf, key);
@@ -32,6 +33,9 @@ const Target* refineUpdate(int w, int h, const CamFrame& cf, float t, bool allow
     key = fnv(&P, sizeof P, key);
     key = fnv(&w, sizeof w, key);
     key = fnv(&h, sizeof h, key);
+    uint64_t oh = objectsHash();
+    key = fnv(&oh, sizeof oh, key);
+    key = fnv(&film, sizeof film, key);
     double now = nowSeconds();
     if (!allowed || key != s_key) { s_key = key; s_n = 0; s_tile = 0; s_since = now; return nullptr; }
     if (now - s_since < STILL_DELAY) return nullptr;
@@ -50,7 +54,7 @@ const Target* refineUpdate(int w, int h, const CamFrame& cf, float t, bool allow
         while (s_n < REFINE_MAX && secondsSince(t0) < BUDGET) {
             if (!uniforms) {
                 float jx = halton(s_n + 1, 2) - 0.5f, jy = halton(s_n + 1, 3) - 0.5f;
-                setSceneUniforms(w, h, cf, t, jx, jy, 0.012f);
+                setSceneUniforms(w, h, cf, t, jx, jy, 0.012f, film);
                 uniforms = true;
             }
             p_glBindFramebuffer(K_FRAMEBUFFER, s_sample.fbo);

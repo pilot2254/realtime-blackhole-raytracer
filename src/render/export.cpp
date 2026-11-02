@@ -152,7 +152,7 @@ static void finishFrame() {
     runBloom(j.accum, j.mips);
     overlayUpdate(g_ovExport, j.W, j.H, ft, !j.screenshot || j.shotSeq);
     float ex = P.exposure * autoExposure(j.screenshot ? j.shotCam : evalSequence(ft));
-    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade, g_ovExport, ex);
+    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade, g_ovExport, ex, telescopeAmount(ft, !j.screenshot || j.shotSeq));
     j.haveFrame = true;
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -197,7 +197,7 @@ void exportStep() {
 
         p_glBindFramebuffer(K_FRAMEBUFFER, j.scene.fbo);
         glViewport(0, 0, j.W, j.H);
-        setSceneUniforms(j.W, j.H, camBasis(cs), sim, jx, jy, j.step);
+        setSceneUniforms(j.W, j.H, camBasis(cs), sim, jx, jy, j.step, !j.screenshot || j.shotSeq);
         glEnable(GL_SCISSOR_TEST);
         glScissor((j.tile % tx) * TILE, (j.tile / tx) * TILE, TILE, TILE);
         glDrawArrays(GL_TRIANGLES, 0, 3);

@@ -125,6 +125,21 @@ void drawIcon(ImDrawList* dl, int icon, ImVec2 c, float s, ImU32 col) {
         else dl->AddLine(P(-0.7f, 0.7f), P(0.7f, -0.7f), col, t);
         break;
     case IC_KEY:    dl->AddQuadFilled(P(0.0f, -0.7f), P(0.7f, 0.0f), P(0.0f, 0.7f), P(-0.7f, 0.0f), col); break;
+    case IC_HOTSPOT: dl->AddCircleFilled(c, s * 0.42f, col, 16);
+                     dl->AddCircle(c, s * 0.75f, (col & 0x00FFFFFF) | 0x70000000, 18, t); break;
+    case IC_PLANET:  dl->AddCircleFilled(c, s * 0.62f, col, 18);
+                     dl->AddEllipse(c, ImVec2(s * 0.95f, s * 0.28f), IM_COL32(230, 230, 230, 200), -0.3f, 18, t); break;
+    case IC_SHIP:    dl->AddCircle(c, s * 0.7f, col, 18, t * 1.2f);
+                     for (int i = 0; i < 6; i++) {
+                         float a = i * PI / 3;
+                         dl->AddRectFilled(P(std::cos(a) * 0.7f - 0.13f, std::sin(a) * 0.7f - 0.13f), P(std::cos(a) * 0.7f + 0.13f, std::sin(a) * 0.7f + 0.13f), col);
+                     }
+                     dl->AddCircleFilled(c, s * 0.16f, col, 8); break;
+    case IC_JET:     dl->AddTriangleFilled(c, P(-0.3f, -0.9f), P(0.3f, -0.9f), col);
+                     dl->AddTriangleFilled(c, P(0.3f, 0.9f), P(-0.3f, 0.9f), (col & 0x00FFFFFF) | 0x90000000);
+                     dl->AddCircleFilled(c, s * 0.2f, IM_COL32(0, 0, 0, 255), 8); break;
+    case IC_EHT:     dl->AddCircle(c, s * 0.65f, IM_COL32(255, 150, 40, 255), 18, t * 2.2f);
+                     dl->AddCircle(P(0.25f, 0.2f), s * 0.25f, IM_COL32(255, 220, 120, 255), 10, t * 1.6f); break;
     case IC_SOUND:
     case IC_MUTE:   dl->AddRectFilled(P(-0.85f, -0.3f), P(-0.5f, 0.3f), col);
                     dl->AddTriangleFilled(P(-0.55f, -0.3f), P(0.0f, -0.75f), P(0.0f, 0.75f), col);

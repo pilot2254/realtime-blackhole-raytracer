@@ -17,14 +17,15 @@ void applyTheme();
 
 // ---------------------------------------------------------------- selection (Outliner / Sequencer -> Details)
 enum { OBJ_BLACKHOLE, OBJ_DISK, OBJ_SKY, OBJ_CAMERA, OBJ_POST, OBJ_FILM, OBJ_COUNT };
-enum { SEL_OBJECT, SEL_KEY, SEL_CUE };
-extern int selKind, selObject, selKey, selCue;
+enum { SEL_OBJECT, SEL_KEY, SEL_CUE, SEL_SCENE };
+extern int selKind, selObject, selKey, selCue, selScene;
 
 // ---------------------------------------------------------------- icons and widgets
 enum Icon {
     IC_PLAY, IC_PAUSE, IC_STOP, IC_START, IC_END, IC_LOOP, IC_SAVE, IC_OPEN, IC_SHOT, IC_RECORD, IC_CINEMA,
     IC_SETTINGS, IC_FOLDER, IC_PLUS, IC_EYE, IC_EYE_OFF, IC_KEY, IC_SOUND, IC_MUTE,
-    IC_BLACKHOLE, IC_DISK, IC_SKY, IC_CAMERA, IC_POST, IC_FILM, IC_TEXT, IC_HUD
+    IC_BLACKHOLE, IC_DISK, IC_SKY, IC_CAMERA, IC_POST, IC_FILM, IC_TEXT, IC_HUD,
+    IC_HOTSPOT, IC_PLANET, IC_SHIP, IC_JET, IC_EHT
 };
 void drawIcon(ImDrawList* dl, int icon, ImVec2 c, float s, ImU32 col);
 float toolButtonWidth(const char* label);
