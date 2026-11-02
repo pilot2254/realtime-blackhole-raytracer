@@ -7,10 +7,7 @@
 build/
 
 # everything the app renders
-renders/
-*.mp4
-*.png
-*.bmp
+renders/**
 
 # user files written at runtime
 gargantua_ui.ini
