@@ -125,6 +125,8 @@ uniform float uFov;
 uniform float uStep;
 uniform vec3  uCamVel;      // camera velocity relative to a free-falling ("rain") observer, units of c
 uniform float uObsShift;    // how much of the camera's own Doppler/gravitational shift is shown
+uniform float uSpin;        // a / M, 0 = Schwarzschild tracer
+uniform float uFall;        // camera: 0 hovering .. 1 free fall (Kerr path; the Schwarzschild path uses uCamVel)
 
 uniform float uGravity;
 uniform float uDiskOn;
@@ -285,7 +287,19 @@ float diskTex(float r, float ang, float t) {
     return 0.12 + 1.35 * acc;
 }
 
-void shadeDisk(vec3 hit, float r, vec3 rayDir, float qObs, inout vec3 col, inout float T) {
+// frequency seen at infinity / emitted, for gas on a circular orbit (Schwarzschild, ray direction known)
+float schwShift(vec3 hit, float r, vec3 rayDir) {
+    vec3  tang  = vec3(-hit.z, 0.0, hit.x) / r;
+    float beta  = sqrt(0.5 / r);
+    float gamma = inversesqrt(1.0 - beta * beta);
+    float cosT  = -dot(tang, rayDir);
+    float D     = mix(1.0, 1.0 / (gamma * (1.0 - beta * cosT)), uDoppler);
+    float g     = mix(1.0, sqrt(max(1.0 - RS / r, 0.0)), uRedshift);
+    return D * g;
+}
+
+// s = frequency seen by the camera / emitted
+void shadeDisk(vec3 hit, float r, float s, inout vec3 col, inout float T) {
     float ang  = atan(hit.z, hit.x);
     float tex  = diskTex(r, ang, uTime);
     float x    = uDiskIn / r;
@@ -293,14 +307,6 @@ void shadeDisk(vec3 hit, float r, vec3 rayDir, float qObs, inout vec3 col, inout
                  smoothstep(uDiskOut, uDiskOut - 0.45 * (uDiskOut - uDiskIn), r);
 
     float temp = uTempPeak * 1.6 * pow(x, 0.75) * pow(max(1.0 - 0.97 * sqrt(x), 0.0), 0.25);
-
-    vec3  tang  = vec3(-hit.z, 0.0, hit.x) / r;
-    float beta  = sqrt(0.5 / r);
-    float gamma = inversesqrt(1.0 - beta * beta);
-    float cosT  = -dot(tang, rayDir);
-    float D     = mix(1.0, 1.0 / (gamma * (1.0 - beta * cosT)), uDoppler);
-    float g     = mix(1.0, sqrt(max(1.0 - RS / r, 0.0)), uRedshift);
-    float s     = D * g * qObs;
 
     float I = x * x * edge * tex * min(pow(s, 4.0), 25.0);
     col += T * blackbody(temp * s) * I * uDiskBright;
@@ -335,7 +341,7 @@ void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dir
             vec3 hit = mix(pp, p, f);
             float hr = length(hit);
             if (hr > uDiskIn && hr < uDiskOut) {
-                shadeDisk(hit, hr, normalize(v), qObs, col, T);
+                shadeDisk(hit, hr, schwShift(hit, hr, normalize(v)) * qObs, col, T);
                 if (T < 0.01) { dirOut = normalize(v); return; }
             }
         }
@@ -343,12 +349,148 @@ void trace(vec3 ro, vec3 rd, float qObs, out vec3 col, out float T, out vec3 dir
     dirOut = normalize(v);
 }
 
+// ------------------------------------------------------------------ Kerr (spinning) black hole
+// Null geodesics in Cartesian Kerr-Schild coordinates: g = eta + f l l, with l null and |l| = 1.
+// These coordinates go smoothly through the horizon. Mass M = r_s / 2; "std" axes put the spin on +z,
+// world y is up, so std = (x, z, -y) and the disk (world y = 0) orbits counter-clockwise around +z.
+// The ray is the real (future directed) photon, integrated backwards in its affine parameter with RK4,
+// with photon energy at infinity fixed to 1 (p_t = -1). H = (-1 + p.p - f (1 + l.p)^2) / 2.
+float KM, KA;     // mass and spin a = chi M
+
+vec3 toStd(vec3 v)   { return vec3(v.x, v.z, -v.y); }
+vec3 fromStd(vec3 v) { return vec3(v.x, -v.z, v.y); }
+
+// Boyer-Lindquist radius, f and l at x
+float ksField(vec3 x, out float f, out vec3 l) {
+    float a2 = KA * KA, b = dot(x, x) - a2;
+    float r2 = max(0.5 * (b + sqrt(b * b + 4.0 * a2 * x.z * x.z)), 1e-10), r = sqrt(r2);
+    float w = r2 + a2;
+    l = vec3((r * x.x + KA * x.y) / w, (r * x.y - KA * x.x) / w, x.z / r);
+    f = 2.0 * KM * r2 * r / (r2 * r2 + a2 * x.z * x.z);
+    return r;
+}
+
+// Hamilton's equations: dx = dH/dp, dp = -dH/dx. Also returns r and grad r.
+void ksDeriv(vec3 x, vec3 p, out vec3 dx, out vec3 dp, out float r, out vec3 gr) {
+    float a = KA, a2 = a * a, b = dot(x, x) - a2;
+    float sq = sqrt(b * b + 4.0 * a2 * x.z * x.z);
+    float r2 = max(0.5 * (b + sq), 1e-10);
+    r  = sqrt(r2);
+    gr = (r2 * x + vec3(0.0, 0.0, a2 * x.z)) / (r * max(sq, 1e-10));     // from r^4 - b r^2 - a^2 z^2 = 0
+    float w  = r2 + a2;
+    float xp = x.x * p.x + x.y * p.y;
+    float Q  = r * xp + a * (x.y * p.x - x.x * p.y);
+    float S  = Q / w + x.z * p.z / r;                                       // l.p
+    vec3  l  = vec3((r * x.x + a * x.y) / w, (r * x.y - a * x.x) / w, x.z / r);
+    float D  = r2 * r2 + a2 * x.z * x.z;
+    float f  = 2.0 * KM * r2 * r / D;
+    vec3  gf = 2.0 * KM * (3.0 * r2 * gr * D - r2 * r * (4.0 * r2 * r * gr + vec3(0.0, 0.0, 2.0 * a2 * x.z))) / (D * D);
+    vec3  gQ = gr * xp + r * vec3(p.x, p.y, 0.0) + a * vec3(-p.y, p.x, 0.0);
+    vec3  gS = (gQ * w - Q * 2.0 * r * gr) / (w * w) + vec3(0.0, 0.0, p.z) / r - x.z * p.z * gr / r2;
+    float c  = 1.0 + S;
+    dx = p - f * c * l;
+    dp = 0.5 * gf * c * c + f * c * gS;
+}
+
+// frequency seen at infinity / emitted for prograde circular orbits in the equatorial plane
+float kerrDiskShift(float r, float Lz) {
+    float sM    = sqrt(KM);
+    float Omega = sM / (r * sqrt(r) + KA * sM);
+    float gtt = -(1.0 - 2.0 * KM / r), gtp = -2.0 * KM * KA / r, gpp = r * r + KA * KA + 2.0 * KM * KA * KA / r;
+    float ut  = inversesqrt(max(-(gtt + 2.0 * Omega * gtp + Omega * Omega * gpp), 1e-8));
+    float gTot  = 1.0 / (ut * (1.0 - Omega * Lz));
+    float gGrav = sqrt(max(1.0 - 2.0 * KM / r, 1e-4));                    // split only for the UI sliders
+    return mix(1.0, gTot / gGrav, uDoppler) * mix(1.0, gGrav, uRedshift);
+}
+
+void traceKerr(vec3 x, vec3 p, float qObs, out vec3 col, out float T, out vec3 dirOut, out float escaped) {
+    float rH = KM + sqrt(max(KM * KM - KA * KA, 0.0));                     // outer horizon
+    float Lz = x.x * p.y - x.y * p.x;                                       // conserved
+    col = vec3(0.0); T = 1.0; escaped = 0.0; dirOut = fromStd(normalize(p));
+    int stuck = 0;
+
+    for (int i = 0; i < 1500; i++) {
+        vec3 dx1, dp1, gr; float r;
+        ksDeriv(x, p, dx1, dp1, r, gr);
+        float R  = length(x);
+        vec3 back = -dx1;                                                    // where the light came from
+        if (R > ESCAPE_R && dot(x, back) > 0.0) { escaped = 1.0; dirOut = fromStd(normalize(back)); return; }
+        // falling (back in time) onto the horizon from outside, it only ever creeps towards it: captured.
+        // From inside, light that hugs the horizon came out of the past horizon: nothing to see either.
+        if (r > rH && r < rH * 1.02 && dot(gr, back) < 0.0) return;
+        stuck = (r < rH && r > rH * 0.95) ? stuck + 1 : 0;
+        if (stuck > 60 || r < 0.01 * KM) return;
+
+        float h = clamp(uStep * 2.0 * R, 0.0003, 3.0) / length(dx1);
+        vec3 dx2, dp2, dx3, dp3, dx4, dp4; vec3 g2; float r2_;
+        ksDeriv(x - 0.5 * h * dx1, p - 0.5 * h * dp1, dx2, dp2, r2_, g2);
+        ksDeriv(x - 0.5 * h * dx2, p - 0.5 * h * dp2, dx3, dp3, r2_, g2);
+        ksDeriv(x - h * dx3,       p - h * dp3,       dx4, dp4, r2_, g2);
+        vec3 xn = x - h / 6.0 * (dx1 + 2.0 * dx2 + 2.0 * dx3 + dx4);
+        vec3 pn = p - h / 6.0 * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4);
+
+        float stepLen = length(xn - x);
+        if (r > rH) col += T * vec3(1.0, 0.55, 0.25) * (uGlow * stepLen / max(r * r * r * r * 16.0 * KM * KM * KM * KM, 1.0));
+
+        if (uDiskOn > 0.5 && (x.z > 0.0) != (xn.z > 0.0)) {
+            vec3 hit = mix(x, xn, x.z / (x.z - xn.z));
+            float fh; vec3 lh;
+            float hr = ksField(hit, fh, lh);
+            if (hr > uDiskIn && hr < uDiskOut) {
+                shadeDisk(fromStd(hit), hr, kerrDiskShift(hr, Lz) * qObs, col, T);
+                if (T < 0.01) { dirOut = fromStd(normalize(-dx1)); return; }
+            }
+        }
+        x = xn; p = pn;
+    }
+    dirOut = fromStd(normalize(-p));
+}
+
 // colour change of a white source seen with frequency ratio q
 vec3 shiftTint(float q) { return blackbody(6500.0 * q) / blackbody(6500.0); }
+
+// Kerr camera. The local reference observer is the Kerr-Schild "normal" observer (at rest in the t = const
+// slice), which exists at every radius. In its frame, space is stretched by sqrt(1 + f) along l.
+// Relative to it, a hovering observer moves at speed f along l, and one falling from rest at infinity at
+// -sqrt(f) / (1 + sqrt(f) + f) (exact for no spin). uFall blends the two.
+void kerrMain(vec3 rd, out vec3 col, out vec3 dir, out float q) {
+    KM = 0.5 * max(uGravity, 0.0);
+    KA = uSpin * KM;
+    vec3 X = toStd(uCamPos);
+    float f; vec3 l;
+    ksField(X, f, l);
+    float sf = sqrt(f);
+    float s  = clamp((1.0 - uFall) * f - uFall * sf / (1.0 + sf + f), -0.95, 0.95);
+    vec3  V  = s * l;
+
+    vec3  n   = toStd(-rd);
+    float vv  = s * s;
+    float gam = inversesqrt(1.0 - vv);
+    float vn  = dot(V, n);
+    vec3  nf  = normalize((n + V * ((gam - 1.0) * vn / max(vv, 1e-12) + gam)) / (gam * (1.0 + vn)));
+
+    float nl  = dot(nf, l);
+    float den = 1.0 - f * nl;                       // > 0 for light that can have come from our universe
+    float E   = sqrt(1.0 + f) / max(den, 1e-4);     // energy seen by the normal observer / at infinity
+    vec3  p   = E * (nf + nl * l * (sqrt(1.0 + f) - 1.0));
+    q = clamp(pow(E / (gam * (1.0 + vn)), uObsShift), 0.02, 50.0);
+
+    col = vec3(0.0); dir = rd;
+    float T = 0.0, esc = 0.0;
+    if (den > 1e-4) traceKerr(X, p, q, col, T, dir, esc);
+    float fp = clamp(length(fwidth(dir)), 2.0 * uFov / uRes.y, 0.05);
+    if (esc > 0.5) col += T * sky(dir, fp) * shiftTint(q) * min(q * q * q * q, 40.0);
+}
 
 void main() {
     vec2 uv = (2.0 * (gl_FragCoord.xy + uJitter) - uRes) / uRes.y;
     vec3 rd = normalize(uCamFwd + uCamRight * (uv.x * uFov) + uCamUp * (uv.y * uFov));
+    if (uSpin > 0.0) {
+        vec3 col, dir; float q;
+        kerrMain(rd, col, dir, q);
+        fragColor = vec4(col, 1.0);
+        return;
+    }
 
     // 1) camera frame -> local free-fall frame: relativistic aberration by the camera velocity
     vec3  n   = -rd;                                    // direction the photon travels
@@ -607,6 +749,7 @@ struct Params {
     bool  disk = true;
     float diskIn = 3.0f, diskOut = 16.0f, tempPeak = 8000.0f, diskBright = 1.25f, diskOpacity = 1.8f;
     float swirl = 1.0f, glow = 0.005f, obsShift = 1.0f, autoExposure = 1.0f;
+    float spin = 0.6f; bool iscoEdge = true;            // a/M; Interstellar's renders used 0.6
     float stars = 1.0f, milky = 1.0f, nebula = 1.0f, galaxy = 1.0f;
     float exposure = 1.0f, bloom = 0.06f, vignette = 0.45f, ca = 0.010f, grain = 2.5f;
 } P;
@@ -663,10 +806,10 @@ static void defaultSequence() {
         {136.0f, { 5.65f,  0.30f,   3.0f,  0.04f, 0.52f,  0.00f,  0.00f, 1.0f}},  // past the inner edge
         {146.0f, { 5.85f,  0.34f,   1.6f,  0.08f, 0.58f,  0.30f,  0.05f, 1.0f}},  // photon sphere
         {154.0f, { 5.95f,  0.36f,   1.0f,  0.10f, 0.62f,  0.65f,  0.08f, 1.0f}},  // event horizon
-        {160.0f, { 6.00f,  0.37f,   0.6f,  0.08f, 0.65f,  1.05f,  0.10f, 1.0f}},
-        {168.0f, { 6.03f,  0.38f,   0.25f, 0.02f, 0.70f,  1.65f,  0.10f, 1.0f}},  // turn to the band of sky
-        {175.0f, { 6.05f,  0.38f,   0.06f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // the end of time
-        {186.0f, { 6.05f,  0.38f,   0.06f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // end card on black
+        {160.0f, { 6.00f,  0.37f,   0.75f, 0.08f, 0.65f,  1.05f,  0.10f, 1.0f}},
+        {168.0f, { 6.03f,  0.38f,   0.50f, 0.02f, 0.70f,  1.65f,  0.10f, 1.0f}},  // turn to the band of sky
+        {175.0f, { 6.05f,  0.38f,   0.32f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // nearing the inner horizon
+        {186.0f, { 6.05f,  0.38f,   0.32f, 0.00f, 0.75f,  1.75f,  0.05f, 1.0f}},  // end card on black
     };
     g_cues = {
         {  2.5f,  11.0f, CUE_TITLE,    "GARGANTUA"},
@@ -676,20 +819,22 @@ static void defaultSequence() {
         { 27.0f,  34.5f, CUE_CAPTION,  "The glow above and below the shadow is the far side of the disk, its light bent around the hole by gravity."},
         { 37.0f,  44.5f, CUE_CAPTION,  "One side of the disk rushes toward us at nearly half the speed of light — brighter and bluer. The other side recedes."},
         { 46.0f,  53.0f, CUE_CHAPTER,  "II   ·   THE WHIRLPOOL"},
-        { 49.0f,  57.0f, CUE_CAPTION,  "From above: gas spiralling inward, heated by friction until it glows."},
+        { 48.5f,  55.5f, CUE_CAPTION,  "From above: gas spiralling inward, heated by friction until it glows."},
+        { 56.0f,  62.5f, CUE_CAPTION,  "Gargantua spins. It drags space around with it, so its shadow is lopsided and the gas can orbit closer in."},
         { 63.0f,  70.0f, CUE_CHAPTER,  "III   ·   THE RING"},
         { 66.0f,  76.0f, CUE_CAPTION,  "A galaxy sits exactly behind the black hole. Gravity bends its light into a perfect circle — an Einstein ring."},
         { 81.0f,  88.0f, CUE_CHAPTER,  "IV   ·   THE DISK"},
         { 84.0f, 174.5f, CUE_HUD,      ""},
         { 90.0f,  97.0f, CUE_CAPTION,  "Skimming the disk. The gas below circles the hole once every few days, faster the closer it gets."},
-        {104.0f, 112.0f, CUE_CAPTION,  "The inner edge, three Schwarzschild radii out. Closer than this no orbit is stable — everything spirals in."},
+        {104.0f, 112.0f, CUE_CAPTION,  "The inner edge of the disk. The spin lets gas orbit closer than it could around a still black hole, but no closer than this."},
         {119.0f, 126.0f, CUE_CHAPTER,  "V   ·   THE FALL"},
         {121.0f, 128.5f, CUE_CAPTION,  "We stop fighting gravity and let go. From here on, we are in free fall."},
         {131.0f, 138.0f, CUE_CAPTION,  "Our own speed squeezes the view ahead and makes it brighter. Light from behind us turns red."},
-        {141.0f, 148.5f, CUE_CAPTION,  "The photon sphere, 1.5 Schwarzschild radii. Here, light itself can travel in circles around the hole."},
-        {150.5f, 158.0f, CUE_CAPTION,  "The event horizon. We cross it and feel nothing. For a black hole this large, the tides here are gentle."},
-        {159.5f, 166.0f, CUE_CAPTION,  "Inside, the singularity is no longer a place. It is a moment in our future, and it cannot be avoided."},
-        {167.0f, 174.0f, CUE_CAPTION,  "The whole universe is squeezed into one thin band of light around us."},
+        {140.5f, 147.5f, CUE_CAPTION,  "Here light itself can orbit the hole: closer on the side turning with it, farther on the side turning against it."},
+        {150.5f, 154.5f, CUE_CAPTION,  "The ergosphere. Space is dragged around so fast that nothing here can stand still."},
+        {155.0f, 160.5f, CUE_CAPTION,  "The event horizon. We cross it and feel nothing. For a black hole this large, the tides are gentle."},
+        {161.0f, 166.5f, CUE_CAPTION,  "Inside a spinning black hole the way down leads to a second, inner horizon."},
+        {167.5f, 174.0f, CUE_CAPTION,  "What lies beyond it, no theory can yet tell us."},
         {177.0f, 185.0f, CUE_TITLE,    "GARGANTUA"},
         {177.5f, 185.0f, CUE_SUBTITLE, "every pixel is a ray of light traced through curved spacetime"},
     };
@@ -812,8 +957,43 @@ static float camRadialVel(float dist, float fall) {
     return std::min(0.95f, (1.0f - fall) * beta);
 }
 
+// ---- Kerr-Schild helpers, same conventions as the shader (M = r_s / 2, spin along world -y)
+static V3 toStd(V3 v) { return {v.x, v.z, -v.y}; }
+static float kerrM() { return 0.5f * std::max(P.gravity, 0.0f); }
+static float ksField(V3 x, float& f, V3& l) {
+    float M = kerrM(), a = P.spin * M, a2 = a * a, b = dot(x, x) - a2;
+    float r2 = std::max(0.5f * (b + std::sqrt(b * b + 4.0f * a2 * x.z * x.z)), 1e-10f), r = std::sqrt(r2);
+    float w = r2 + a2;
+    l = {(r * x.x + a * x.y) / w, (r * x.y - a * x.x) / w, x.z / r};
+    f = 2.0f * M * r2 * r / (r2 * r2 + a2 * x.z * x.z);
+    return r;
+}
+// camera speed along l relative to the Kerr-Schild normal observer (see the shader's kerrMain)
+static float kerrCamSpeed(float f, float fall) {
+    float sf = std::sqrt(f);
+    return std::max(-0.95f, std::min(0.95f, (1.0f - fall) * f - fall * sf / (1.0f + sf + f)));
+}
+// innermost stable circular orbit (prograde), outer and inner horizon, in r_s
+static float iscoRs(float chi) {
+    float z1 = 1.0f + std::cbrt(1.0f - chi * chi) * (std::cbrt(1.0f + chi) + std::cbrt(1.0f - chi));
+    float z2 = std::sqrt(3.0f * chi * chi + z1 * z1);
+    return 0.5f * (3.0f + z2 - std::sqrt((3.0f - z1) * (3.0f + z1 + 2.0f * z2)));
+}
+static float horizonRs(float chi, float sign) { return 0.5f * (1.0f + sign * std::sqrt(std::max(0.0f, 1.0f - chi * chi))); }
+
 // frequency shift the camera sees straight ahead (same maths as the shader), drives auto exposure
 static float viewShift(const CamState& c) {
+    if (P.spin > 0.0f) {
+        CamFrame cf = camBasis(c);
+        V3 X = toStd(cf.pos), l; float f;
+        ksField(X, f, l);
+        float s = kerrCamSpeed(f, cf.fall), gam = 1.0f / std::sqrt(1.0f - s * s);
+        V3 V = l * s, n = toStd(cf.fwd * -1.0f);
+        float vn = dot(V, n);
+        V3 nf = norm((n + V * ((gam - 1.0f) * vn / std::max(s * s, 1e-12f) + gam)) * (1.0f / (gam * (1.0f + vn))));
+        float E = std::sqrt(1.0f + f) / std::max(1.0f - f * dot(nf, l), 0.05f);
+        return E / (gam * (1.0f + vn));
+    }
     CamFrame f = camBasis(c);
     float r = len(f.pos);
     V3 rh = f.pos * (1.0f / r);
@@ -911,9 +1091,25 @@ static std::vector<std::pair<std::string, std::string>> hudLines(const CamState&
     double rsM  = 2953.25 * g_massSun;                  // Schwarzschild radius, metres
     double rsC  = rsM / 299792458.0;                    // light crossing time, seconds
     double beta = std::sqrt(1.0 / r);
+    float  kf = 0; V3 kl;
+    if (P.spin > 0.0f) r = ksField(toStd(camBasis(c).pos), kf, kl);       // Boyer-Lindquist radius
     double au   = r * rsM / 1.495978707e11;
     L.push_back({"DISTANCE", au > 0.05 ? fmt("%.2f r_s   %.2f AU", r, au) : fmt("%.3f r_s   %.0f km", r, r * rsM / 1000.0)});
-    if (r > 1.0005) {
+    if (P.spin > 0.0f) {
+        // static observers move at speed f along l relative to the Kerr-Schild normal observer
+        if (kf < 0.999f) {
+            double s = kerrCamSpeed(kf, c.fall), vrel = (s - kf) / (1.0 - s * kf);
+            double gam = 1.0 / std::sqrt(1.0 - vrel * vrel);
+            L.push_back({"VELOCITY", std::fabs(vrel) < 1e-3 ? std::string("hovering") : fmt("%.3f c inward", -vrel)});
+            L.push_back({"CLOCKS", fmt("1 s here = %.3f s far away", gam / std::sqrt(1.0 - kf))});
+        } else if (r > horizonRs(P.spin, 1.0f)) {
+            L.push_back({"VELOCITY", "ergosphere: space drags everything around"});
+            L.push_back({"CLOCKS", "no clock here can stand still"});
+        } else {
+            L.push_back({"VELOCITY", "no observer can stand still here"});
+            L.push_back({"CLOCKS", "outside time no longer reaches us"});
+        }
+    } else if (r > 1.0005) {
         double v    = camRadialVel((float)r, c.fall);
         double vrel = (v - beta) / (1.0 - v * beta);    // relative to an observer hovering here
         double gam  = 1.0 / std::sqrt(1.0 - vrel * vrel);
@@ -925,7 +1121,10 @@ static std::vector<std::pair<std::string, std::string>> hudLines(const CamState&
     }
     double tide = 299792458.0 * 299792458.0 * 2.0 / (rsM * rsM * r * r * r) / 9.81;   // head-to-toe, 2 m
     L.push_back({"TIDES", tide < 0.01 ? fmt("%.1e g head to toe", tide) : fmt("%.2f g head to toe", tide)});
-    if (c.fall > 0.5) L.push_back({"SINGULARITY", "in " + fmtDuration(2.0 / 3.0 * std::pow(r, 1.5) * rsC) + " of our time"});
+    if (P.spin > 0.0f)
+        L.push_back({"SPIN", fmt("a = %.2f M   horizons at %.2f and %.2f r_s", P.spin, horizonRs(P.spin, 1.0f), horizonRs(P.spin, -1.0f))});
+    else if (c.fall > 0.5)
+        L.push_back({"SINGULARITY", "in " + fmtDuration(2.0 / 3.0 * std::pow(r, 1.5) * rsC) + " of our time"});
     return L;
 }
 
@@ -1035,6 +1234,8 @@ static void setSceneUniforms(int w, int h, const CamFrame& cf, float t, float jx
     V3 vel = norm(cf.pos) * camRadialVel(len(cf.pos), cf.fall);
     u3f(p, "uCamVel", vel.x, vel.y, vel.z);
     u1f(p, "uObsShift", P.obsShift);
+    u1f(p, "uSpin", P.spin);
+    u1f(p, "uFall", cf.fall);
     u1f(p, "uGravity", P.gravity);
     u1f(p, "uDiskOn", P.disk ? 1.0f : 0.0f);
     u1f(p, "uDiskIn", P.diskIn);
@@ -1138,7 +1339,7 @@ static char  g_exPath[260] = "gargantua.mp4";
 static char  g_ffmpeg[260] = "ffmpeg";
 static char  g_seqPath[260] = "sequence.txt";
 static std::string g_status;
-static std::string g_stillName;          // fixed screenshot file name (used by --stills)
+static std::string g_stillName, g_stillPrefix = "still_";          // fixed screenshot file name (used by --stills)
 static const int RES_W[] = {1280, 1920, 2560, 3840}, RES_H[] = {720, 1080, 1440, 2160};
 static const int FPS_V[] = {24, 30, 60};
 static const int TILE = 256;
@@ -1428,7 +1629,13 @@ static void drawUI(float fps, int rw, int rh) {
         ImGui::SliderFloat("Doppler beaming", &P.doppler, 0.0f, 1.0f);
         ImGui::SliderFloat("Grav. redshift", &P.redshift, 0.0f, 1.0f);
         ImGui::Checkbox("Accretion disk", &P.disk);
-        ImGui::DragFloatRange2("Disk radii", &P.diskIn, &P.diskOut, 0.05f, 1.6f, 40.0f, "in %.2f r_s", "out %.1f r_s");
+        ImGui::SliderFloat("Spin (a/M)", &P.spin, 0.0f, 0.998f, "%.3f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = Schwarzschild (fast tracer). Above 0 the Kerr tracer runs:\n"
+                                                      "frame dragging, a lopsided shadow, the disk reaching closer in.");
+        ImGui::Checkbox("Disk starts at the ISCO", &P.iscoEdge);
+        ImGui::BeginDisabled(P.iscoEdge);
+        ImGui::DragFloatRange2("Disk radii", &P.diskIn, &P.diskOut, 0.05f, 0.5f, 40.0f, "in %.2f r_s", "out %.1f r_s");
+        ImGui::EndDisabled();
         P.diskOut = std::max(P.diskOut, P.diskIn + 0.5f);
         ImGui::SliderFloat("Temperature", &P.tempPeak, 1500.0f, 30000.0f, "%.0f K", ImGuiSliderFlags_Logarithmic);
         ImGui::SliderFloat("Brightness", &P.diskBright, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
@@ -1441,8 +1648,11 @@ static void drawUI(float fps, int rw, int rh) {
                                                       "Falling in, light ahead turns blue and bright, light behind turns red.");
         if (ImGui::Button("Physically based")) { P.doppler = 1; P.redshift = 1; P.tempPeak = 8000; P.diskBright = 1.25f; P.glow = 0.005f; }
         ImGui::SameLine();
-        if (ImGui::Button("Interstellar look")) { P.doppler = 0; P.redshift = 0.3f; P.tempPeak = 5200; P.diskBright = 1.6f; P.glow = 0.008f; }
-        ImGui::TextDisabled("horizon 1 r_s | photon sphere 1.5 r_s | ISCO 3 r_s");
+        if (ImGui::Button("Interstellar look")) { P.spin = 0.6f; P.doppler = 0; P.redshift = 0.3f; P.tempPeak = 5200; P.diskBright = 1.6f; P.glow = 0.008f; }
+        if (P.spin > 0.0f)
+            ImGui::TextDisabled("horizon %.2f r_s | ISCO %.2f r_s", horizonRs(P.spin, 1.0f), iscoRs(P.spin));
+        else
+            ImGui::TextDisabled("horizon 1 r_s | photon sphere 1.5 r_s | ISCO 3 r_s");
     }
 
     // ---------------------------------------------------------------- sky
@@ -1666,6 +1876,8 @@ int main() {
         } else if (a == "--res" && i + 1 < __argc) g_exRes = std::max(0, std::min(3, std::atoi(__argv[++i])));
         else if (a == "--samples" && i + 1 < __argc) g_exSamples = std::max(1, std::atoi(__argv[++i]));
         else if (a == "--sequence" && i + 1 < __argc) loadSequence(__argv[++i]);
+        else if (a == "--spin" && i + 1 < __argc) P.spin = std::max(0.0f, std::min(0.998f, (float)std::atof(__argv[++i])));
+        else if (a == "--prefix" && i + 1 < __argc) g_stillPrefix = __argv[++i];
     }
     size_t stillNext = 0;
 
@@ -1734,10 +1946,13 @@ int main() {
             if (stillNext == stills.size()) break;
             g_camMode = CAM_SEQUENCE; g_playing = false;
             g_playhead = stills[stillNext++];
-            g_stillName = fmt("still_%06.2f", g_playhead);
+            g_stillName = g_stillPrefix + fmt("%06.2f", g_playhead);
             g_exUltra = true;
             beginExport(true);
         }
+
+        if (P.iscoEdge) P.diskIn = iscoRs(P.spin) * std::max(P.gravity, 0.01f);
+        P.diskOut = std::max(P.diskOut, P.diskIn + 0.5f);
 
         // ---- advance time
         if (!g_job.active) {
