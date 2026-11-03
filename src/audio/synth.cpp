@@ -172,8 +172,8 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         // impacts from ~6 r_s and every half bar near the end. Each chord swells and eases like a phrase.
         float epic   = smoothstepf(0.38f, 0.92f, T) * (1.0f - codaMix);
         float swell  = 0.72f + 0.28f * std::sin(PI * in / CHORD_LEN);
-        float strLvl = (0.45f + 0.55f * smoothstepf(0.05f, 0.6f, T)) * swell * (1.0f - 0.3f * epic);
-        float choLvl = smoothstepf(0.25f, 0.7f, T) * swell;
+        float strLvl = (0.45f + 0.55f * smoothstepf(0.05f, 0.6f, T)) * swell * (1.0f - 0.5f * epic);
+        float choLvl = smoothstepf(0.25f, 0.7f, T) * swell * (1.0f - 0.4f * epic);
         float melLvl = smoothstepf(0.14f, 0.5f, T);
         float melOct = smoothstepf(0.55f, 0.9f, T);
         breath *= 1.0f - 0.45f * epic;                           // the organ steps back for the brass (never mutes)
@@ -209,7 +209,7 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                     int root = CHORDS[chord][0];
                     while (root > 47) root -= 12;                 // brass in the C2..B2 octave
                     br = Braam{};
-                    br.age = 0.0f; br.amp = epic; br.freq = midiHz(root);
+                    br.age = 0.0f; br.amp = std::sqrt(epic); br.freq = midiHz(root);   // full-blooded early on
                 }
                 braamBeat = b;
             }
@@ -363,46 +363,39 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 L += melLp[0][1] * g * 1.05f; R += melLp[1][1] * g * 0.95f;
             }
 
-            // braams: low brass and a horn section an octave and a fifth up bloom open over ~0.4 s and hold
-            // for seconds; under them a sine sub an octave below (and two below where that is still audible),
-            // lightly saturated so laptop speakers carry its overtones, and a deep drum on the downbeat. The
-            // sub stays dry: low end in the hall turns to mud.
+            // braams: low brass and a horn section an octave and a fifth up swell in over ~0.3 s, blare open and
+            // hold for seconds, overblown into a slight growl. Under them a clean sine sub an octave below (and
+            // two below where that is still audible) that swells with the brass, no attack of its own, so it
+            // never reads as a kick drum. The sub stays dry: low end in the hall turns to mud.
             float sub2 = 0.0f;
             for (Braam& br : braam) {
                 if (br.age < 0.0f) continue;
                 float tb = br.age / RATE;
-                float env = (1.0f - std::exp(-tb / 0.18f)) * std::exp(-tb / 3.6f);
-                static const float MUL[10] = {0.5f, 0.503f, 1.0f, 0.997f, 1.4983f, 1.503f, 2.0f, 2.006f, 2.997f, 3.004f};
-                static const float GAIN[10] = {1.0f, 1.0f, 0.8f, 0.8f, 0.45f, 0.45f, 0.5f, 0.5f, 0.3f, 0.3f};
+                float env = (1.0f - std::exp(-tb / 0.3f)) * std::exp(-tb / 4.5f);
+                static const float MUL[10] = {1.0f, 1.004f, 0.997f, 1.4983f, 1.503f, 2.0f, 2.006f, 1.997f, 2.997f, 3.004f};
+                static const float GAIN[10] = {1.0f, 1.0f, 0.8f, 0.55f, 0.55f, 0.7f, 0.7f, 0.5f, 0.35f, 0.35f};
                 float saw[2] = {0.0f, 0.0f};
                 for (int q = 0; q < 10; q++) {
                     float f = br.freq * MUL[q];
                     advance(br.ph[q], f);
                     saw[q & 1] += sawBlep(br.ph[q], f / RATE) * GAIN[q];
                 }
-                float bloom = (1.0f - std::exp(-tb / 0.3f)) * std::exp(-tb / 2.0f);
-                float fc = 120.0f + 2400.0f * br.amp * bloom + 300.0f * env;
+                float bloom = (1.0f - std::exp(-tb / 0.35f)) * (0.55f + 0.45f * std::exp(-tb / 2.5f));
+                float fc = 250.0f + 3600.0f * (0.4f + 0.6f * br.amp) * bloom;
                 float a = 1.0f - std::exp(-2 * PI * fc / RATE);
                 for (int ch = 0; ch < 2; ch++) {
                     br.lp[ch][0] += (saw[ch] - br.lp[ch][0]) * a;
                     br.lp[ch][1] += (br.lp[ch][0] - br.lp[ch][1]) * a;
                 }
-                float brass = 0.21f * br.amp * env;
-                L += br.lp[0][1] * brass; R += br.lp[1][1] * brass;
+                float brass = 0.75f * br.amp * env;
+                L += std::tanh(1.8f * br.lp[0][1]) * brass; R += std::tanh(1.8f * br.lp[1][1]) * brass;
 
                 float f1 = br.freq * 0.5f, f2 = br.freq * 0.25f, s2 = 0.0f;
                 advance(br.sub[0], f1);
                 if (f2 >= 26.0f) { advance(br.sub[1], f2); s2 = 0.55f * std::sin(2 * PI * br.sub[1]); }
-                float senv = (1.0f - std::exp(-tb / 0.06f)) * std::exp(-tb / 3.8f);
-                sub2 += br.amp * senv * std::tanh(1.6f * (std::sin(2 * PI * br.sub[0]) + s2)) * 0.95f;
+                float senv = (1.0f - std::exp(-tb / 0.4f)) * std::exp(-tb / 4.5f);
+                sub2 += br.amp * senv * (std::sin(2 * PI * br.sub[0]) + s2) * 0.6f;
 
-                if (tb < 2.5f) {                                    // the drum: a skin falling 110 to 45 Hz
-                    advance(br.drumPh, 45.0f + 65.0f * std::exp(-tb / 0.07f));
-                    br.drumLp += (noise() - br.drumLp) * 0.08f;
-                    float d = (std::tanh(2.0f * std::sin(2 * PI * br.drumPh)) * std::exp(-tb / 0.6f)
-                               + 2.0f * br.drumLp * std::exp(-tb / 0.04f)) * 0.6f * br.amp;
-                    sub2 += d * 0.8f; L += d * 0.25f; R += d * 0.25f;       // mostly dry, a little in the hall
-                }
                 br.age += 1.0f;
                 if (tb > 30.0f) br.age = -1.0f;
             }

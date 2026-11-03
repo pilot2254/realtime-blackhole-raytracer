@@ -97,7 +97,7 @@ There's no recorded music. A synthesiser written in C++ reads the camera's state
 - **A clock** ticks once per second of *far-away* time. It speeds up with time dilation, and stops at the horizon, where no outside clock exists any more.
 - **The disk** roars when you're close, **a ship's engines** hum, and **a planet's ocean** swells.
 - **An orchestra:** a string section plays the chords from the first frame, and each chord swells and eases like a phrase. A slow theme comes in once the hole is near, played like a bowed line, with an octave joining it as you fall. A choir singing "aah" (three vowel formants on saw waves) comes in closer still. All of it gets brighter and louder as the hole gets closer.
-- **Brass impacts:** in the last minute before the horizon, long low brass "braams" with a horn section on top land on every chord change, then every half bar. Each one has a deep drum hit and carries a sine sub-bass an octave below (two octaves where that's still audible), and it's loud. The rest of the low end steps back so the impacts own it.
+- **Brass impacts:** in the last minute before the horizon, long low brass "braams" with a horn section on top land on every chord change, then every half bar. Each one carries a sine sub-bass an octave below (two octaves where that's still audible), and it's loud. The rest of the low end steps back so the impacts own it.
 - **The ending:** at the cut to black the effects stop, and the organ resolves and rings out.
 
 The same code plays live and renders into the video.

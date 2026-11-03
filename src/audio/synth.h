@@ -1,6 +1,6 @@
 #pragma once
 // The soundtrack, synthesised from the physics: a pipe organ, a string section and a choir that build as
-// the camera nears the horizon, a slow hymn-like theme on top, long brass impacts with drums and sub-bass
+// the camera nears the horizon, a slow hymn-like theme on top, long brass impacts with sub-bass
 // in the last minute before the horizon, a clock that ticks once per second of far-away time (so it speeds
 // up with time dilation and stops inside the horizon), and a low roar near the disk. Deterministic: the same camera path always
 // gives the same sound, so the video export renders it offline, sample-exact.
@@ -35,8 +35,8 @@ private:
     struct Comb { std::vector<float> buf; int pos = 0; float store = 0; };
     struct Allpass { std::vector<float> buf; int pos = 0; };
     // a brass "braam": low detuned saws and a horn section an octave and a fifth up, through filters that
-    // bloom open, over sine sub-bass and a low drum hit
-    struct Braam { float age = -1.0f, amp = 0.0f, freq = 0.0f, ph[12] = {}, sub[2] = {}, drumPh = 0.0f, drumLp = 0.0f,
+    // bloom open, over sine sub-bass
+    struct Braam { float age = -1.0f, amp = 0.0f, freq = 0.0f, ph[12] = {}, sub[2] = {},
                    lp[2][2] = {}, hp[2][2] = {}; };
     // a chord's string section: 6 notes (cellos on the root an octave down), 5 detuned saws each
     struct Strings { float ph[6][5] = {}, amp = 0.0f; };
