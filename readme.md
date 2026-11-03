@@ -2,6 +2,9 @@
 
 A real-time black hole ray tracer for Windows, written in C++ with OpenGL and Dear ImGui. Every pixel follows a ray of light through curved spacetime, so the lensing, the lopsided shadow, the Einstein ring and the view from inside the horizon all come out of the maths. There are no textures or fakes. It comes with an Unreal-style editor, a camera sequencer, a physics-driven soundtrack, and a short film, **GARGANTUA**, that orbits the black hole, skims its disk, passes Miller's planet and falls in.
 
+- **Watch the film:** [GARGANTUA on YouTube](https://youtu.be/tTYk6m-MdHU) (a quick 720p render, 1 sample per frame, rendered in 40 minutes)
+- **High-quality renders:** [stills and clips I made during development](https://drive.google.com/drive/folders/1VpPd0evaCeeV0h3W2k0Xf80fztzRC0Hx?usp=sharing) (Google Drive)
+
 **The editor**:
 
 ![Editor](showcase/editor.png)
@@ -133,9 +136,9 @@ Artistic licence:
 
 The app opens on a welcome card (what it is, and the controls) with the film paused behind it. Press **Watch the film** or **Space** to play; it loops. Left-drag the viewport to take over the camera, right-drag to look around, wheel to move closer, **P** to freeze time, **Tab** for a full-window picture. Help > Controls lists everything.
 
-## The film: GARGANTUA (3 min 32 s)
+## The film: GARGANTUA (about 4 min)
 
-Letterboxed to 2.39:1, with titles, chapter cards and captions:
+[Watch it on YouTube](https://youtu.be/tTYk6m-MdHU). Letterboxed to 2.39:1, with titles, chapter cards and captions:
 1. **The shadow.** Deep space, where a tiny black hole bends the stars. Then the approach into the classic edge-on view.
 2. **The whirlpool.** Rise to a top-down shot of the whole swirling disk, with the red **hot spot** riding it.
 3. **The ring.** A galaxy lines up exactly behind the hole, and gravity bends it into a complete **Einstein ring**. Then the view fades into what the **Event Horizon Telescope** would see.
