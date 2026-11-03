@@ -9,7 +9,7 @@ std::vector<Key> g_keys;
 std::vector<Cue> g_cues;
 float g_playhead = 0.0f, g_playSpeed = 1.0f, g_fadeIn = 2.0f, g_fadeOut = 3.0f;
 float g_blackAt = 0.0f;
-bool  g_playing = true, g_loop = true;
+bool  g_playing = false, g_loop = true;      // the film starts paused, behind the welcome card
 bool  g_cuesOn = true, g_letterboxOn = true;
 float g_letterbox = 2.39f;
 float g_massSun = 1.0e8f;    // Gargantua, Kip Thorne's figure for the film

@@ -15,7 +15,6 @@ struct SoundControls {
     float tickLevel = 0.0f;
     float roar = 0.0f;          // disk proximity
     float shift = 1.0f;         // frequency shift straight ahead (brightens the roar)
-    float hum = 0.0f;           // a ship close by
     float ocean = 0.0f;         // a planet's ocean close by
     float coda = 0.0f;          // 1 after the film's cut to black: resolve to A minor and ring out
 };
@@ -45,10 +44,10 @@ private:
 
     std::vector<Voice> voices;
     SoundControls cur;
-    float subPhase[2] = {0, 0};
+    float subPhase[4][2] = {};
     double tickPhase = 0;
     float tickEnv = 0, tickAge = 0, tickLp = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
-    float humPhase[3] = {0, 0, 0}, humLp[2] = {0, 0}, oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
+    float oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
     float codaMix = 0.0f;
     long  braamBeat = -1;
     float limEnv = 0.0f;

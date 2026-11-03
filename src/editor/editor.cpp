@@ -348,34 +348,61 @@ void panelViewport(GLuint tex, int renderW, int renderH) {
 }  // namespace ed
 
 // ---------------------------------------------------------------- help
+static void aboutBody() {
+    ImGui::PushFont(ed::fontBold, 0.0f); ImGui::TextUnformatted("Gargantua Studio"); ImGui::PopFont();
+    ImGui::TextWrapped("A real-time black hole ray tracer. Every pixel follows a ray of light through curved spacetime: "
+                       "Schwarzschild geodesics for a still black hole, Kerr geodesics for a spinning one. The film, its "
+                       "soundtrack and every star are computed from the equations, with no textures, models or recordings.");
+    ImGui::TextDisabled("C++, OpenGL 3.3, Dear ImGui %s", IMGUI_VERSION);
+    ImGui::TextDisabled("Made by Michal Flaska, with Claude by Anthropic");
+}
+static void controlsBody() {
+    static const char* rows[][2] = {
+        {"Left-drag viewport", "orbit the black hole"}, {"Right-drag viewport", "look around"},
+        {"Mouse wheel", "move closer / farther"},       {"Space", "play / pause"},
+        {"K", "add a camera key (Sequencer)"},          {"Delete", "delete the selected key or cue"},
+        {"P", "freeze / unfreeze time"},
+        {"Tab", "cinema mode on / off"},                {"Esc", "leave cinema mode"},
+        {"F11 / Alt+Enter", "fullscreen"},               {"F12", "screenshot"},
+        {"Ctrl+O / Ctrl+S", "open / save sequence"},
+    };
+    if (ed::beginProps("ctl")) {
+        for (auto& r : rows) { ed::propLabel(r[0]); ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(r[1]); }
+        ed::endProps();
+    }
+    ImGui::TextDisabled("Drag panel tabs to rearrange. Window > Reset Layout restores them.");
+}
+
+// at start-up a welcome card shows both (the film waits, paused, behind it); Help reopens either
+static bool g_showWelcome = true;
+
 static void helpWindows() {
+    if (g_showWelcome) { ImGui::OpenPopup("Welcome"); g_showWelcome = false; }
     if (g_showHelp) { ImGui::OpenPopup("Controls"); g_showHelp = false; }
     if (g_showAbout) { ImGui::OpenPopup("About Gargantua Studio"); g_showAbout = false; }
+    ImGui::SetNextWindowSize(ImVec2(500 * g_dpi, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Welcome", nullptr, ImGuiWindowFlags_NoResize)) {
+        aboutBody();
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        ImGui::PushFont(ed::fontBold, 0.0f); ImGui::TextUnformatted("Controls"); ImGui::PopFont();
+        controlsBody();
+        ImGui::Spacing();
+        if (ImGui::Button("Watch the film", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4 * g_dpi, 0))) {
+            g_camMode = CAM_SEQUENCE; g_playing = true; ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
     ImGui::SetNextWindowSize(ImVec2(460 * g_dpi, 0), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Controls", nullptr, ImGuiWindowFlags_NoResize)) {
-        static const char* rows[][2] = {
-            {"Left-drag viewport", "orbit the black hole"}, {"Right-drag viewport", "look around"},
-            {"Mouse wheel", "move closer / farther"},       {"Space", "play / pause"},
-            {"K", "add a camera key (Sequencer)"},          {"Delete", "delete the selected key or cue"},
-            {"P", "freeze / unfreeze time"},
-            {"Tab", "cinema mode on / off"},                {"Esc", "leave cinema mode"},
-            {"F11 / Alt+Enter", "fullscreen"},               {"F12", "screenshot"},
-            {"Ctrl+O / Ctrl+S", "open / save sequence"},
-        };
-        if (ed::beginProps("ctl")) {
-            for (auto& r : rows) { ed::propLabel(r[0]); ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(r[1]); }
-            ed::endProps();
-        }
-        ImGui::TextDisabled("Drag panel tabs to rearrange. Window > Reset Layout restores them.");
+        controlsBody();
         if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::SetNextWindowSize(ImVec2(460 * g_dpi, 0), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("About Gargantua Studio", nullptr, ImGuiWindowFlags_NoResize)) {
-        ImGui::PushFont(ed::fontBold, 0.0f); ImGui::TextUnformatted("Gargantua Studio"); ImGui::PopFont();
-        ImGui::TextWrapped("A real-time black hole ray tracer. Every pixel follows a ray of light through curved spacetime: "
-                           "Schwarzschild geodesics for a still black hole, Kerr geodesics for a spinning one.");
-        ImGui::TextDisabled("C++, OpenGL 3.3, Dear ImGui %s", IMGUI_VERSION);
+        aboutBody();
         if (ImGui::Button("Close", ImVec2(-1, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }

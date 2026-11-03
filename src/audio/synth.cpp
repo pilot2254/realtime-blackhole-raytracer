@@ -1,4 +1,5 @@
 #include "audio/synth.h"
+#include "audio/notes.h"
 #include <algorithm>
 #include <cmath>
 #include "core/math.h"
@@ -18,13 +19,12 @@ SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     s.tickLevel = smoothstepf(0.22f, 0.42f, s.tension);             // the clock fades in below ~10 r_s
     s.roar  = diskProximity(c);
     s.shift = std::max(0.3f, std::min(4.0f, viewShift(c)));
-    // scene objects nearby: a ship's engines, a planet's ocean
+    // scene objects nearby: a planet's ocean
     CamFrame cf = camBasis(c);
     for (const SceneObject& o : g_objects) {
-        if (!objectActive(o, t, film) || (o.type != SO_SHIP && o.type != SO_PLANET)) continue;
+        if (!objectActive(o, t, film) || o.type != SO_PLANET) continue;
         float d = len(objectPosition(o, t, film) - cf.pos) - o.size, pr = objectPresence(o, t, film);
-        if (o.type == SO_SHIP)   s.hum   = std::max(s.hum, pr * smoothstepf(4.0f, 0.6f, d));
-        if (o.type == SO_PLANET) s.ocean = std::max(s.ocean, pr * smoothstepf(3.5f, 0.8f, d));
+        s.ocean = std::max(s.ocean, pr * smoothstepf(3.5f, 0.8f, d));
     }
     return s;
 }
@@ -42,7 +42,7 @@ SoundControls filmSound(float t) {
     s.level = std::exp(-(t - cut) / (0.45f * tail)) * smoothstepf(L, L - std::min(6.0f, 0.5f * tail), t);
     s.coda = 1.0f;
     s.tension = 0.45f;
-    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f;
+    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.ocean = 0.0f;
     return s;
 }
 
@@ -73,7 +73,6 @@ static inline float lookup(const float* tab, float ph) {
     float f = x - i;
     return tab[i & (TAB - 1)] * (1 - f) + tab[(i + 1) & (TAB - 1)] * f;
 }
-static float midiHz(int n) { return 440.0f * std::pow(2.0f, (n - 69) / 12.0f); }
 // sawtooth with a polyBLEP correction at the wrap, so high notes don't alias into a buzz
 static inline float sawBlep(float ph, float dt) {
     float v = 2.0f * ph - 1.0f;
@@ -84,11 +83,20 @@ static inline float sawBlep(float ph, float dt) {
 static inline void advance(float& ph, float f) { ph += f / Synth::RATE; ph -= (int)ph; }
 
 // A minor: Am - Fmaj7 - C - G, one chord every 9 s with long crossfades
-static const int CHORDS[4][5] = {{45, 52, 57, 60, 64}, {41, 48, 57, 60, 64}, {48, 55, 60, 64, 67}, {43, 50, 55, 59, 62}};
+static const int CHORDS[4][5] = {
+    {NOTE_A2, NOTE_E3, NOTE_A3, NOTE_C4, NOTE_E4},              // Am
+    {NOTE_F2, NOTE_C3, NOTE_A3, NOTE_C4, NOTE_E4},              // Fmaj7
+    {NOTE_C3, NOTE_G3, NOTE_C4, NOTE_E4, NOTE_G4},              // C
+    {NOTE_G2, NOTE_D3, NOTE_G3, NOTE_B3, NOTE_D4},              // G
+};
 static const float CHORD_LEN = 9.0f, CROSSFADE = 3.0f;
 
-static const float THEME_T[11] = {0, 3, 6, 9, 15, 16.5f, 18, 22.5f, 27, 30, 33};
-static const int   THEME_N[11] = {64, 69, 71, 72, 71, 69, 67, 64, 74, 71, 67};
+// every note belongs to the chord under it, also through the 3 s crossfades into the next chord
+static const float THEME_T[11] = {0, 3, 6, 9, 13.5f, 15, 18, 22.5f, 27, 30, 33};
+static const int   THEME_N[11] = {NOTE_E4, NOTE_A4, NOTE_C5,             // Am (C5 also fits F, coming next)
+                                  NOTE_A4, NOTE_C5, NOTE_E5,             // F  (E5 is its maj7 and C's third)
+                                  NOTE_G4, NOTE_E4,                      // C
+                                  NOTE_D5, NOTE_B4, NOTE_G4};            // G  (G4 sits on Am as its 7th)
 
 // voice layout per chord: 5 base notes, 1 pedal, 5 octave-up, 1 shimmer
 enum { BASE = 0, PEDAL = 5, OCTAVE = 6, SHIMMER = 11, PER_CHORD = 12 };
@@ -96,10 +104,10 @@ enum { BASE = 0, PEDAL = 5, OCTAVE = 6, SHIMMER = 11, PER_CHORD = 12 };
 Synth::Synth() {
     buildTables();
     for (int c = 0; c < 4; c++) {
-        for (int n = 0; n < 5; n++) voices.push_back({midiHz(CHORDS[c][n]), (n - 2) * 0.25f, 0});
-        voices.push_back({midiHz(CHORDS[c][0] - 12), 0.0f, 0});
-        for (int n = 0; n < 5; n++) voices.push_back({midiHz(CHORDS[c][n] + 12), (2 - n) * 0.3f, 1});
-        voices.push_back({midiHz(CHORDS[c][0] + 26), 0.15f, 1});
+        for (int n = 0; n < 5; n++) voices.push_back({noteHz(CHORDS[c][n]), (n - 2) * 0.25f, 0});
+        voices.push_back({noteHz(CHORDS[c][0] - 12), 0.0f, 0});
+        for (int n = 0; n < 5; n++) voices.push_back({noteHz(CHORDS[c][n] + 12), (2 - n) * 0.3f, 1});
+        voices.push_back({noteHz(CHORDS[c][0] + 24 + 2), 0.15f, 1});   // the 9th, two octaves up
     }
     // Freeverb-style reverb: lengths at 44.1 kHz scaled to 48 kHz, right channel slightly longer for width
     const int combLen[4] = {1557, 1617, 1491, 1422}, apLen[2] = {556, 441};
@@ -147,7 +155,6 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         cur.tickLevel += (target.tickLevel - cur.tickLevel) * k;
         cur.roar      += (target.roar - cur.roar) * k;
         cur.shift     += (target.shift - cur.shift) * k;
-        cur.hum       += (target.hum - cur.hum) * k;
         cur.ocean     += (target.ocean - cur.ocean) * k;
         cur.tickRate   = target.tickRate;
         float levelFrom = cur.level;
@@ -182,14 +189,14 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
 
         // the theme: which note now (the coda holds A)
         {
-            int note = 69;
+            int note = NOTE_A4;
             if (codaMix < 0.5f) {
                 int k = 0;
                 while (k + 1 < 11 && THEME_T[k + 1] <= cyc) k++;
                 note = THEME_N[k];
             }
             if (note != melNote) {
-                melTarget = midiHz(note);
+                melTarget = noteHz(note);
                 if (melNote < 0) melFreq = melTarget;
                 melEnv *= 0.55f;                                  // a soft new bow stroke, not a restart
                 melNote = note;
@@ -207,9 +214,9 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                     Braam& br = braam[braamNext]; braamNext = (braamNext + 1) % 3;
                     int chord = (int)(std::fmod(b * beat, 4.0 * CHORD_LEN) / CHORD_LEN) % 4;
                     int root = CHORDS[chord][0];
-                    while (root > 47) root -= 12;                 // brass in the C2..B2 octave
+                    root = inOctave(root, NOTE_C2);               // brass in the C2..B2 octave
                     br = Braam{};
-                    br.age = 0.0f; br.amp = std::sqrt(epic); br.freq = midiHz(root);   // full-blooded early on
+                    br.age = 0.0f; br.amp = std::sqrt(epic); br.freq = noteHz(root);   // full-blooded early on
                 }
                 braamBeat = b;
             }
@@ -237,9 +244,14 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 R += a * (sB * (0.5f + 0.5f * vo.pan) + sA * 0.5f);
             }
             // deep drone, felt more than heard
-            subPhase[0] += 27.5f / RATE; subPhase[0] -= (int)subPhase[0];
-            subPhase[1] += 55.0f / RATE; subPhase[1] -= (int)subPhase[1];
-            float d = sub * (std::sin(2 * PI * subPhase[0]) * 0.7f + std::sin(2 * PI * subPhase[1]) * 0.5f);
+            // on each chord's root, A0..G#1 and an octave up, crossfading with the chords
+            float d = 0.0f;
+            for (int c = 0; c < 4; c++) {
+                float f = noteHz(inOctave(CHORDS[c][0], NOTE_A0));
+                advance(subPhase[c][0], f); advance(subPhase[c][1], 2.0f * f);
+                d += w[c] * (std::sin(2 * PI * subPhase[c][0]) * 0.7f + std::sin(2 * PI * subPhase[c][1]) * 0.5f);
+            }
+            d *= sub;
             L += d; R += d;
 
             // the clock: one tick per second of far-away time
@@ -251,7 +263,7 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
             hpOut = 0.95f * (hpOut + nz - hpPrev); hpPrev = nz;
             if (tickEnv == 1.0f) tickAge = 0.0f;
             // a soft wooden knock: low sine with a touch of filtered noise, ~9 ms decay, mostly heard in the hall
-            float knock = std::sin(2 * PI * 620.0f * tickAge / RATE) + 0.15f * hpOut;
+            float knock = std::sin(2 * PI * noteHz(NOTE_E5) * tickAge / RATE) + 0.15f * hpOut;
             tickLp += (knock - tickLp) * 0.35f;
             float click = tickEnv * tickLp * 0.09f * cur.tickLevel;
             tickEnv *= 0.99769f;
@@ -267,18 +279,6 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
             float roar = 0.22f * cur.roar;                            // a bed under the organ, not over it
             L += roarLp[0] * roar; R += roarLp[1] * roar;
 
-            // a ship's engines: low detuned saws, slowly throbbing
-            if (cur.hum > 1e-3f) {
-                const float hz[3] = {41.2f, 41.5f, 82.4f};
-                float saw = 0;
-                for (int k3 = 0; k3 < 3; k3++) {
-                    humPhase[k3] += hz[k3] / RATE; humPhase[k3] -= (int)humPhase[k3];
-                    saw += (2.0f * humPhase[k3] - 1.0f) * (k3 == 2 ? 0.5f : 1.0f);
-                }
-                float throb = 0.75f + 0.25f * std::sin(2 * PI * 0.5f * (float)(ts + i / (double)RATE));
-                for (int ch = 0; ch < 2; ch++) humLp[ch] += (saw - humLp[ch]) * (ch ? 0.030f : 0.034f);
-                L += humLp[0] * 0.16f * cur.hum * throb; R += humLp[1] * 0.16f * cur.hum * throb;
-            }
             // a planet's ocean: noise in slow swells
             if (cur.ocean > 1e-3f) {
                 float swell = 0.5f + 0.5f * std::sin(2 * PI * 0.09f * (float)(ts + i / (double)RATE));
@@ -302,7 +302,7 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 co.amp += (w[c] * choLvl - co.amp) * strK * (1.0f / n);
                 if (st.amp > 1e-5f)
                     for (int k = 0; k < 6; k++) {
-                        float f = midiHz(k < 5 ? CHORDS[c][k] : CHORDS[c][0] - 12);
+                        float f = noteHz(k < 5 ? CHORDS[c][k] : CHORDS[c][0] - 12);
                         for (int q = 0; q < 5; q++) {
                             float fq = f * (1.0f + DET[q]);
                             advance(st.ph[k][q], fq);
@@ -313,7 +313,7 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                     }
                 if (co.amp > 1e-5f)
                     for (int k = 0; k < 3; k++) {
-                        float f = midiHz(CHORDS[c][k + 2]);
+                        float f = noteHz(CHORDS[c][k + 2]);
                         for (int q = 0; q < 3; q++) {
                             float fq = f * (1.0f + DET[q + 1] * 1.4f);
                             advance(co.ph[k][q], fq);
