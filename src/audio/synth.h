@@ -1,8 +1,8 @@
 #pragma once
-// The soundtrack, synthesised from the physics: a pipe organ that builds as the camera nears the
-// horizon, an organ ostinato that quickens as we fall, long brass impacts with sub-bass in the last
-// minute before the horizon, a clock that ticks once per second of far-away time (so it speeds up with time dilation and
-// stops inside the horizon), and a low roar near the disk. Deterministic: the same camera path always
+// The soundtrack, synthesised from the physics: a pipe organ, a string section and a choir that build as
+// the camera nears the horizon, a slow hymn-like theme on top, long brass impacts with drums and sub-bass
+// in the last minute before the horizon, a clock that ticks once per second of far-away time (so it speeds
+// up with time dilation and stops inside the horizon), and a low roar near the disk. Deterministic: the same camera path always
 // gives the same sound, so the video export renders it offline, sample-exact.
 #include <cstdint>
 #include <vector>
@@ -34,8 +34,14 @@ private:
     struct Voice { float freq, pan; int table; float phA = 0, phB = 0, amp = 0; };
     struct Comb { std::vector<float> buf; int pos = 0; float store = 0; };
     struct Allpass { std::vector<float> buf; int pos = 0; };
-    // a brass "braam": low detuned saws through a filter that blooms open, over sine sub-bass
-    struct Braam { float age = -1.0f, amp = 0.0f, freq = 0.0f, ph[7] = {}, ph2 = 0.0f, lp[2][2] = {}; };
+    // a brass "braam": low detuned saws and a horn section an octave and a fifth up, through filters that
+    // bloom open, over sine sub-bass and a low drum hit
+    struct Braam { float age = -1.0f, amp = 0.0f, freq = 0.0f, ph[12] = {}, sub[2] = {}, drumPh = 0.0f, drumLp = 0.0f,
+                   lp[2][2] = {}, hp[2][2] = {}; };
+    // a chord's string section: 6 notes (cellos on the root an octave down), 5 detuned saws each
+    struct Strings { float ph[6][5] = {}, amp = 0.0f; };
+    // a chord's choir: the top 3 notes, 3 saws each, through "aah" formants
+    struct Choir { float ph[3][3] = {}, amp = 0.0f; };
 
     std::vector<Voice> voices;
     SoundControls cur;
@@ -44,8 +50,13 @@ private:
     float tickEnv = 0, tickAge = 0, tickLp = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
     float humPhase[3] = {0, 0, 0}, humLp[2] = {0, 0}, oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
     float codaMix = 0.0f;
-    long  ostStep = -1, braamBeat = -1;
-    float ostEnv = 0.0f, ostPh = 0.0f, ostFreq = 0.0f, ostAccent = 1.0f, ostPan = 0.0f, limEnv = 0.0f;
+    long  braamBeat = -1;
+    float limEnv = 0.0f;
+    Strings strings[4];
+    Choir choir[4];
+    float strLp[2][2] = {}, formant[2][3][2] = {};
+    int   melNote = -1;
+    float melPh[3] = {}, melFreq = 0.0f, melTarget = 0.0f, melEnv = 0.0f, melLp[2][2] = {};
     Braam braam[3];
     int   braamNext = 0;
     uint32_t rng = 0x9E3779B9u;

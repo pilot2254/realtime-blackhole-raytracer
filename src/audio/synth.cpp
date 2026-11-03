@@ -74,10 +74,21 @@ static inline float lookup(const float* tab, float ph) {
     return tab[i & (TAB - 1)] * (1 - f) + tab[(i + 1) & (TAB - 1)] * f;
 }
 static float midiHz(int n) { return 440.0f * std::pow(2.0f, (n - 69) / 12.0f); }
+// sawtooth with a polyBLEP correction at the wrap, so high notes don't alias into a buzz
+static inline float sawBlep(float ph, float dt) {
+    float v = 2.0f * ph - 1.0f;
+    if (ph < dt)             { float t = ph / dt;          v -= t + t - t * t - 1.0f; }
+    else if (ph > 1.0f - dt) { float t = (ph - 1.0f) / dt; v -= t * t + t + t + 1.0f; }
+    return v;
+}
+static inline void advance(float& ph, float f) { ph += f / Synth::RATE; ph -= (int)ph; }
 
 // A minor: Am - Fmaj7 - C - G, one chord every 9 s with long crossfades
 static const int CHORDS[4][5] = {{45, 52, 57, 60, 64}, {41, 48, 57, 60, 64}, {48, 55, 60, 64, 67}, {43, 50, 55, 59, 62}};
 static const float CHORD_LEN = 9.0f, CROSSFADE = 3.0f;
+
+static const float THEME_T[11] = {0, 3, 6, 9, 15, 16.5f, 18, 22.5f, 27, 30, 33};
+static const int   THEME_N[11] = {64, 69, 71, 72, 71, 69, 67, 64, 74, 71, 67};
 
 // voice layout per chord: 5 base notes, 1 pedal, 5 octave-up, 1 shimmer
 enum { BASE = 0, PEDAL = 5, OCTAVE = 6, SHIMMER = 11, PER_CHORD = 12 };
@@ -157,27 +168,35 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         float octave  = smoothstepf(0.35f, 0.85f, T);
         float shimmer = smoothstepf(0.60f, 1.00f, T);
         float breath  = 1.0f + 0.08f * std::sin(2.0f * PI * 0.07f * (float)ts);
-        // the epic layers: an ostinato from ~40 r_s, quickening; brass impacts from ~6 r_s, every bar near the end
-        float ost  = smoothstepf(0.12f, 0.45f, T) * (1.0f - codaMix);
-        float epic = smoothstepf(0.38f, 0.92f, T) * (1.0f - codaMix);
-        breath *= 1.0f - 0.45f * epic;                           // the pad steps back for the brass (never mutes)
+        // the orchestra: strings from the very start, the theme from ~45 r_s, the choir from ~15 r_s, brass
+        // impacts from ~6 r_s and every half bar near the end. Each chord swells and eases like a phrase.
+        float epic   = smoothstepf(0.38f, 0.92f, T) * (1.0f - codaMix);
+        float swell  = 0.72f + 0.28f * std::sin(PI * in / CHORD_LEN);
+        float strLvl = (0.45f + 0.55f * smoothstepf(0.05f, 0.6f, T)) * swell * (1.0f - 0.3f * epic);
+        float choLvl = smoothstepf(0.25f, 0.7f, T) * swell;
+        float melLvl = smoothstepf(0.14f, 0.5f, T);
+        float melOct = smoothstepf(0.55f, 0.9f, T);
+        breath *= 1.0f - 0.45f * epic;                           // the organ steps back for the brass (never mutes)
+        float strA = 1.0f - std::exp(-2 * PI * (500.0f + 2400.0f * T * swell + 900.0f * epic) / RATE);
+        float melA = 1.0f - std::exp(-2 * PI * (700.0f + 2200.0f * T) / RATE);
 
-        // ostinato: the chord's notes an octave up, 2, then 4, then 8 notes a second
-        if (ost > 1e-3f) {
-            double len = T < 0.45f ? 0.5 : T < 0.8f ? 0.25 : 0.125;
-            long step = (long)std::floor(ts / len);
-            if (step != ostStep) {
-                static const int PAT[8] = {0, 2, 3, 4, 3, 2, 1, 2};
-                int chord = in > CHORD_LEN - 0.75f ? (ci + 1) % 4 : ci;
-                int note = codaMix > 0.5f ? 0 : chord;
-                ostFreq = midiHz(CHORDS[note][PAT[(step % 8 + 8) % 8]] + 12);
-                ostAccent = (step % 4 == 0) ? 1.35f : 1.0f;
-                ostPan = (step % 2) ? 0.35f : -0.35f;
-                if (ostStep >= 0) ostEnv = 1.0f;
-                ostStep = step;
+        // the theme: which note now (the coda holds A)
+        {
+            int note = 69;
+            if (codaMix < 0.5f) {
+                int k = 0;
+                while (k + 1 < 11 && THEME_T[k + 1] <= cyc) k++;
+                note = THEME_N[k];
+            }
+            if (note != melNote) {
+                melTarget = midiHz(note);
+                if (melNote < 0) melFreq = melTarget;
+                melEnv *= 0.55f;                                  // a soft new bow stroke, not a restart
+                melNote = note;
             }
         }
-        float ostDecay = std::exp(-1.0f / ((T < 0.45f ? 0.22f : T < 0.8f ? 0.13f : 0.075f) * RATE));
+        float melAtk = 1.0f - std::exp(-n / (0.35f * RATE)), melGlide = 1.0f - std::exp(-n / (0.08f * RATE));
+        float strK = 1.0f - std::exp(-n / (0.05f * RATE));
 
         // braams: on every chord change, and on every half bar once we're deep in
         if (epic > 0.03f) {
@@ -273,42 +292,117 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
             }
 
 
-            // ostinato: staccato organ notes, accented on the beat, in the hall
-            if (ostEnv > 1e-4f) {
-                ostPh += ostFreq / RATE; ostPh -= (int)ostPh;
-                float s = lookup(g_bright, ostPh) * ostEnv * ostAccent * 0.075f * ost;
-                L += s * (0.6f - 0.4f * ostPan); R += s * (0.6f + 0.4f * ostPan);
-                ostEnv *= ostDecay;
+            // strings: per chord 6 notes x 5 detuned saws, spread across the stereo field, one filter
+            float sL = 0.0f, sR = 0.0f, cMono[2] = {0.0f, 0.0f};
+            static const float DET[5] = {-0.0065f, -0.003f, 0.0f, 0.003f, 0.0065f};
+            for (int c = 0; c < 4; c++) {
+                Strings& st = strings[c];
+                st.amp += (w[c] * strLvl - st.amp) * strK * (1.0f / n);
+                Choir& co = choir[c];
+                co.amp += (w[c] * choLvl - co.amp) * strK * (1.0f / n);
+                if (st.amp > 1e-5f)
+                    for (int k = 0; k < 6; k++) {
+                        float f = midiHz(k < 5 ? CHORDS[c][k] : CHORDS[c][0] - 12);
+                        for (int q = 0; q < 5; q++) {
+                            float fq = f * (1.0f + DET[q]);
+                            advance(st.ph[k][q], fq);
+                            float v = sawBlep(st.ph[k][q], fq / RATE) * st.amp * (k == 5 ? 1.3f : 1.0f);
+                            float pan = (q - 2) * 0.4f + (k - 2.5f) * 0.06f;
+                            sL += v * (0.5f - 0.5f * pan); sR += v * (0.5f + 0.5f * pan);
+                        }
+                    }
+                if (co.amp > 1e-5f)
+                    for (int k = 0; k < 3; k++) {
+                        float f = midiHz(CHORDS[c][k + 2]);
+                        for (int q = 0; q < 3; q++) {
+                            float fq = f * (1.0f + DET[q + 1] * 1.4f);
+                            advance(co.ph[k][q], fq);
+                            cMono[q & 1] += sawBlep(co.ph[k][q], fq / RATE) * co.amp;
+                        }
+                    }
+            }
+            for (int ch = 0; ch < 2; ch++) {
+                float x = ch ? sR : sL;
+                strLp[ch][0] += (x - strLp[ch][0]) * strA;
+                strLp[ch][1] += (strLp[ch][0] - strLp[ch][1]) * strA;
+            }
+            L += strLp[0][1] * 0.055f; R += strLp[1][1] * 0.055f;
+
+            // choir: "aah" from three vowel formants (800, 1150, 2900 Hz) on the saws
+            if (cMono[0] != 0.0f || cMono[1] != 0.0f) {
+                static const float FF[3] = {800.0f, 1150.0f, 2900.0f}, FG[3] = {1.0f, 0.55f, 0.22f};
+                for (int ch = 0; ch < 2; ch++) {
+                    float x = cMono[ch], y = 0.0f;
+                    for (int f = 0; f < 3; f++) {
+                        float fr = 2.0f * std::sin(PI * FF[f] * (ch ? 1.02f : 1.0f) / RATE);
+                        float& lo = formant[ch][f][0];
+                        float& bp = formant[ch][f][1];
+                        lo += fr * bp;
+                        float hi = x - lo - 0.12f * bp;
+                        bp += fr * hi;
+                        y += bp * FG[f];
+                    }
+                    (ch ? R : L) += y * 0.018f;
+                }
             }
 
-            // braams: the brass blooms open over ~0.3 s and holds for seconds; under it a sine sub an
-            // octave below (and two below where that is still audible), lightly saturated so laptop
-            // speakers carry its overtones. The sub stays dry: low end in the hall turns to mud.
+            // the theme: a bowed line (two saws, an octave above joining as we fall), soft attacks, vibrato
+            if (melLvl > 1e-3f) {
+                melEnv  += (1.0f - melEnv) * melAtk * (1.0f / n);
+                melFreq += (melTarget - melFreq) * melGlide * (1.0f / n);
+                float vib = 1.0f + 0.0035f * melEnv * std::sin(2 * PI * 5.2f * (float)(ts + i / (double)RATE));
+                float f = melFreq * vib;
+                advance(melPh[0], f); advance(melPh[1], f * 1.004f); advance(melPh[2], f * 2.0f);
+                float m = sawBlep(melPh[0], f / RATE) + sawBlep(melPh[1], f * 1.004f / RATE)
+                        + melOct * 0.7f * sawBlep(melPh[2], 2.0f * f / RATE);
+                for (int ch = 0; ch < 2; ch++) {
+                    melLp[ch][0] += (m - melLp[ch][0]) * melA;
+                    melLp[ch][1] += (melLp[ch][0] - melLp[ch][1]) * melA;
+                }
+                float g = 0.05f * melLvl * melEnv;
+                L += melLp[0][1] * g * 1.05f; R += melLp[1][1] * g * 0.95f;
+            }
+
+            // braams: low brass and a horn section an octave and a fifth up bloom open over ~0.4 s and hold
+            // for seconds; under them a sine sub an octave below (and two below where that is still audible),
+            // lightly saturated so laptop speakers carry its overtones, and a deep drum on the downbeat. The
+            // sub stays dry: low end in the hall turns to mud.
             float sub2 = 0.0f;
             for (Braam& br : braam) {
                 if (br.age < 0.0f) continue;
                 float tb = br.age / RATE;
-                float env = (1.0f - std::exp(-tb / 0.12f)) * std::exp(-tb / 3.2f);
-                const float mul[6] = {0.5f, 0.503f, 1.0f, 0.997f, 1.4983f, 1.503f};
+                float env = (1.0f - std::exp(-tb / 0.18f)) * std::exp(-tb / 3.6f);
+                static const float MUL[10] = {0.5f, 0.503f, 1.0f, 0.997f, 1.4983f, 1.503f, 2.0f, 2.006f, 2.997f, 3.004f};
+                static const float GAIN[10] = {1.0f, 1.0f, 0.8f, 0.8f, 0.45f, 0.45f, 0.5f, 0.5f, 0.3f, 0.3f};
                 float saw[2] = {0.0f, 0.0f};
-                for (int q = 0; q < 6; q++) {
-                    br.ph[q] += br.freq * mul[q] / RATE; br.ph[q] -= (int)br.ph[q];
-                    float v = 2.0f * br.ph[q] - 1.0f;
-                    saw[q & 1] += v * (q < 2 ? 1.0f : q < 4 ? 0.8f : 0.45f);
+                for (int q = 0; q < 10; q++) {
+                    float f = br.freq * MUL[q];
+                    advance(br.ph[q], f);
+                    saw[q & 1] += sawBlep(br.ph[q], f / RATE) * GAIN[q];
                 }
-                float fc = 110.0f + 1700.0f * br.amp * (1.0f - std::exp(-tb / 0.25f)) * std::exp(-tb / 1.6f) + 260.0f * env;
+                float bloom = (1.0f - std::exp(-tb / 0.3f)) * std::exp(-tb / 2.0f);
+                float fc = 120.0f + 2400.0f * br.amp * bloom + 300.0f * env;
                 float a = 1.0f - std::exp(-2 * PI * fc / RATE);
                 for (int ch = 0; ch < 2; ch++) {
                     br.lp[ch][0] += (saw[ch] - br.lp[ch][0]) * a;
                     br.lp[ch][1] += (br.lp[ch][0] - br.lp[ch][1]) * a;
                 }
-                float brass = 0.24f * br.amp * env;
+                float brass = 0.21f * br.amp * env;
                 L += br.lp[0][1] * brass; R += br.lp[1][1] * brass;
-                br.ph[6] += br.freq * 0.5f / RATE; br.ph[6] -= (int)br.ph[6];          // sub, an octave down
-                float f2 = br.freq * 0.25f, s2 = 0.0f;
-                if (f2 >= 26.0f) { br.ph2 += f2 / RATE; br.ph2 -= (int)br.ph2; s2 = 0.55f * std::sin(2 * PI * br.ph2); }   // two down, if audible
+
+                float f1 = br.freq * 0.5f, f2 = br.freq * 0.25f, s2 = 0.0f;
+                advance(br.sub[0], f1);
+                if (f2 >= 26.0f) { advance(br.sub[1], f2); s2 = 0.55f * std::sin(2 * PI * br.sub[1]); }
                 float senv = (1.0f - std::exp(-tb / 0.06f)) * std::exp(-tb / 3.8f);
-                sub2 += br.amp * senv * std::tanh(1.6f * (std::sin(2 * PI * br.ph[6]) + s2)) * 0.95f;
+                sub2 += br.amp * senv * std::tanh(1.6f * (std::sin(2 * PI * br.sub[0]) + s2)) * 0.95f;
+
+                if (tb < 2.5f) {                                    // the drum: a skin falling 110 to 45 Hz
+                    advance(br.drumPh, 45.0f + 65.0f * std::exp(-tb / 0.07f));
+                    br.drumLp += (noise() - br.drumLp) * 0.08f;
+                    float d = (std::tanh(2.0f * std::sin(2 * PI * br.drumPh)) * std::exp(-tb / 0.6f)
+                               + 2.0f * br.drumLp * std::exp(-tb / 0.04f)) * 0.6f * br.amp;
+                    sub2 += d * 0.8f; L += d * 0.25f; R += d * 0.25f;       // mostly dry, a little in the hall
+                }
                 br.age += 1.0f;
                 if (tb > 30.0f) br.age = -1.0f;
             }
