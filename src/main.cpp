@@ -269,7 +269,7 @@ int main() {
             }
             overlayUpdate(g_ovView, outW, outH, g_playhead, g_camMode == CAM_SEQUENCE);
             composite(g_showUI ? view8.fbo : 0, outW, outH, *img, *imgMips, t, currentFade(), g_ovView,
-                      P.exposure * autoExposure(cam), telescopeAmount(t, film), horizonQuake(cam));
+                      P.exposure * autoExposure(cam), telescopeAmount(t, film));
             drewToWindow = !g_showUI;
         }
         p_glBindFramebuffer(K_FRAMEBUFFER, 0);

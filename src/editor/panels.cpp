@@ -364,9 +364,6 @@ static void detailsPost() {
         propFloat("Vignette", &P.vignette, 0.0f, 1.0f);
         propFloat("Chromatic aberration", &P.ca, 0.0f, 0.05f, "%.3f");
         propFloat("Film grain", &P.grain, 0.0f, 10.0f);
-        propFloat("Horizon shake", &P.shake, 0.0f, 2.0f, "%.2f", 0,
-                  "Shakes the picture as the camera crosses the event horizon, with the bass drop.\n"
-                  "Cinematic licence: for a black hole this large nothing physical shakes there.");
         endProps();
     }
     if (category("Telescope view") && beginProps("post_eht")) {

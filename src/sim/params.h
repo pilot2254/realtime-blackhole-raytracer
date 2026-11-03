@@ -11,6 +11,5 @@ struct Params {
     float stars = 1.0f, milky = 1.0f, nebula = 1.0f, galaxy = 1.0f;
     float exposure = 1.0f, bloom = 0.06f, vignette = 0.45f, ca = 0.010f, grain = 2.5f;
     float telescope = 0.0f;                             // 0..1 Event Horizon Telescope view
-    float shake = 1.0f;                                 // camera shake at the horizon crossing (cinematic)
 };
 extern Params P;

@@ -18,9 +18,6 @@ SoundControls soundControls(const CamState& c, float fade, float t, bool film) {
     s.tickLevel = smoothstepf(0.22f, 0.42f, s.tension);             // the clock fades in below ~10 r_s
     s.roar  = diskProximity(c);
     s.shift = std::max(0.3f, std::min(4.0f, viewShift(c)));
-    s.quake  = horizonQuake(c);
-    s.inside = r < rh ? 1.0f : 0.0f;
-    s.duck   = r < rh ? 0.0f : smoothstepf(1.15f, 1.0f, r / rh);
     // scene objects nearby: a ship's engines, a planet's ocean
     CamFrame cf = camBasis(c);
     for (const SceneObject& o : g_objects) {
@@ -45,7 +42,7 @@ SoundControls filmSound(float t) {
     s.level = std::exp(-(t - cut) / (0.45f * tail)) * smoothstepf(L, L - std::min(6.0f, 0.5f * tail), t);
     s.coda = 1.0f;
     s.tension = 0.45f;
-    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f; s.quake = 0.0f; s.duck = 0.0f;
+    s.tickLevel = 0.0f; s.tickRate = 0.0f; s.roar = 0.0f; s.hum = 0.0f; s.ocean = 0.0f;
     return s;
 }
 
@@ -141,11 +138,6 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         cur.shift     += (target.shift - cur.shift) * k;
         cur.hum       += (target.hum - cur.hum) * k;
         cur.ocean     += (target.ocean - cur.ocean) * k;
-        cur.quake     += (target.quake - cur.quake) * k;
-        cur.duck      += (target.duck - cur.duck) * (1.0f - std::exp(-n / ((target.duck > cur.duck ? 0.25f : 0.03f) * RATE)));
-        // crossing the horizon fires the boom (not on the first block, so opening inside stays quiet)
-        if (wasInside == 0.0f && target.inside > 0.5f) { boomAge = 0.0f; boomPh = 0.0f; }
-        wasInside = target.inside > 0.5f ? 1.0f : 0.0f;
         cur.tickRate   = target.tickRate;
         float levelFrom = cur.level;
         cur.level     += (target.level - cur.level) * kl;
@@ -165,14 +157,52 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
         float octave  = smoothstepf(0.35f, 0.85f, T);
         float shimmer = smoothstepf(0.60f, 1.00f, T);
         float breath  = 1.0f + 0.08f * std::sin(2.0f * PI * 0.07f * (float)ts);
+        // the epic layers: an ostinato from ~40 r_s, quickening; brass impacts from ~6 r_s, every bar near the end
+        float ost  = smoothstepf(0.12f, 0.45f, T) * (1.0f - codaMix);
+        float epic = smoothstepf(0.38f, 0.92f, T) * (1.0f - codaMix);
+        breath *= 1.0f - 0.45f * epic;                           // the pad steps back for the brass (never mutes)
+
+        // ostinato: the chord's notes an octave up, 2, then 4, then 8 notes a second
+        if (ost > 1e-3f) {
+            double len = T < 0.45f ? 0.5 : T < 0.8f ? 0.25 : 0.125;
+            long step = (long)std::floor(ts / len);
+            if (step != ostStep) {
+                static const int PAT[8] = {0, 2, 3, 4, 3, 2, 1, 2};
+                int chord = in > CHORD_LEN - 0.75f ? (ci + 1) % 4 : ci;
+                int note = codaMix > 0.5f ? 0 : chord;
+                ostFreq = midiHz(CHORDS[note][PAT[(step % 8 + 8) % 8]] + 12);
+                ostAccent = (step % 4 == 0) ? 1.35f : 1.0f;
+                ostPan = (step % 2) ? 0.35f : -0.35f;
+                if (ostStep >= 0) ostEnv = 1.0f;
+                ostStep = step;
+            }
+        }
+        float ostDecay = std::exp(-1.0f / ((T < 0.45f ? 0.22f : T < 0.8f ? 0.13f : 0.075f) * RATE));
+
+        // braams: on every chord change, and on every half bar once we're deep in
+        if (epic > 0.03f) {
+            double beat = epic > 0.75f ? CHORD_LEN * 0.5 : CHORD_LEN;
+            long b = (long)std::floor(ts / beat);
+            if (b != braamBeat) {
+                if (braamBeat >= 0) {
+                    Braam& br = braam[braamNext]; braamNext = (braamNext + 1) % 3;
+                    int chord = (int)(std::fmod(b * beat, 4.0 * CHORD_LEN) / CHORD_LEN) % 4;
+                    int root = CHORDS[chord][0];
+                    while (root > 47) root -= 12;                 // brass in the C2..B2 octave
+                    br = Braam{};
+                    br.age = 0.0f; br.amp = epic; br.freq = midiHz(root);
+                }
+                braamBeat = b;
+            }
+        }
 
         float targetAmp[4 * PER_CHORD];
         for (int c = 0; c < 4; c++)
             for (int v = 0; v < PER_CHORD; v++) {
-                float a = v < PEDAL ? 0.10f * organ : v == PEDAL ? 0.16f * pedal : v < SHIMMER ? 0.055f * octave : 0.05f * shimmer;
+                float a = v < PEDAL ? 0.10f * organ : v == PEDAL ? 0.16f * pedal * (1.0f - 0.7f * epic) : v < SHIMMER ? 0.055f * octave : 0.05f * shimmer;
                 targetAmp[c * PER_CHORD + v] = a * w[c] * breath;
             }
-        float sub = 0.14f * T * T;
+        float sub = 0.14f * T * T * (1.0f - 0.85f * epic);      // the braams own the low end once they come in
 
         for (int i = 0; i < n; i++) {
             float fi = (i + 1) / (float)n, L = 0, R = 0;
@@ -242,45 +272,52 @@ void Synth::render(float* lr, int frames, double t, const SoundControls& target)
                 L += oceanLp2[0] * o; R += oceanLp2[1] * o;
             }
 
-            // the horizon: an organ's 32-foot register on A, two pipes beating against each other so the
-            // floor throbs, driven into saturation so its overtones carry on small speakers too, over a
-            // rumble of sub-filtered noise. Kept dry: low end in the hall only turns to mud.
-            float bass = 0.0f;
-            if (cur.quake > 1e-3f) {
-                const float hz[4] = {27.5f, 27.8f, 41.2f, 55.0f}, amp[4] = {0.9f, 0.6f, 0.35f, 0.5f};
-                float s = 0;
-                for (int q = 0; q < 4; q++) {
-                    quakePh[q] += hz[q] / RATE; quakePh[q] -= (int)quakePh[q];
-                    s += amp[q] * std::sin(2 * PI * quakePh[q]);
-                }
-                float trem = 0.8f + 0.2f * std::sin(2 * PI * 5.5f * (float)(ts + i / (double)RATE));
-                for (int q = 0; q < 2; q++) {
-                    rumbleLp[q][0] += (noise() - rumbleLp[q][0]) * 0.006f;   // ~45 Hz, two poles
-                    rumbleLp[q][1] += (rumbleLp[q][0] - rumbleLp[q][1]) * 0.006f;
-                }
-                bass += cur.quake * (0.5f * std::tanh(1.8f * s) * trem + 6.0f * (rumbleLp[0][1] + rumbleLp[1][1]));
-            }
-            // the boom on crossing: a kick that falls from 80 Hz to the floor and hangs for seconds
-            if (boomAge >= 0.0f) {
-                float tb = boomAge / RATE;
-                float f = 27.5f + 55.0f * std::exp(-tb / 0.35f);
-                boomPh += f / RATE; boomPh -= (int)boomPh;
-                float env = (1.0f - std::exp(-tb / 0.004f)) * std::exp(-tb / 4.0f);
-                boomLp += (noise() - boomLp) * 0.02f;
-                bass += env * (0.9f * std::tanh(2.2f * std::sin(2 * PI * boomPh)) + 3.0f * boomLp * std::exp(-tb / 0.5f));
-                boomAge += 1.0f;
-                if (tb > 14.0f) boomAge = -1.0f;
+
+            // ostinato: staccato organ notes, accented on the beat, in the hall
+            if (ostEnv > 1e-4f) {
+                ostPh += ostFreq / RATE; ostPh -= (int)ostPh;
+                float s = lookup(g_bright, ostPh) * ostEnv * ostAccent * 0.075f * ost;
+                L += s * (0.6f - 0.4f * ostPan); R += s * (0.6f + 0.4f * ostPan);
+                ostEnv *= ostDecay;
             }
 
-            // the music ducks before the horizon (the hall rings on) and makes room for the bass
-            float mg = (1.0f - 0.75f * cur.duck) * (1.0f - 0.25f * cur.quake);
-            L *= mg; R *= mg;
+            // braams: the brass blooms open over ~0.3 s and holds for seconds; under it a sine sub an
+            // octave below (and two below where that is still audible), lightly saturated so laptop
+            // speakers carry its overtones. The sub stays dry: low end in the hall turns to mud.
+            float sub2 = 0.0f;
+            for (Braam& br : braam) {
+                if (br.age < 0.0f) continue;
+                float tb = br.age / RATE;
+                float env = (1.0f - std::exp(-tb / 0.12f)) * std::exp(-tb / 3.2f);
+                const float mul[6] = {0.5f, 0.503f, 1.0f, 0.997f, 1.4983f, 1.503f};
+                float saw[2] = {0.0f, 0.0f};
+                for (int q = 0; q < 6; q++) {
+                    br.ph[q] += br.freq * mul[q] / RATE; br.ph[q] -= (int)br.ph[q];
+                    float v = 2.0f * br.ph[q] - 1.0f;
+                    saw[q & 1] += v * (q < 2 ? 1.0f : q < 4 ? 0.8f : 0.45f);
+                }
+                float fc = 110.0f + 1700.0f * br.amp * (1.0f - std::exp(-tb / 0.25f)) * std::exp(-tb / 1.6f) + 260.0f * env;
+                float a = 1.0f - std::exp(-2 * PI * fc / RATE);
+                for (int ch = 0; ch < 2; ch++) {
+                    br.lp[ch][0] += (saw[ch] - br.lp[ch][0]) * a;
+                    br.lp[ch][1] += (br.lp[ch][0] - br.lp[ch][1]) * a;
+                }
+                float brass = 0.24f * br.amp * env;
+                L += br.lp[0][1] * brass; R += br.lp[1][1] * brass;
+                br.ph[6] += br.freq * 0.5f / RATE; br.ph[6] -= (int)br.ph[6];          // sub, an octave down
+                float f2 = br.freq * 0.25f, s2 = 0.0f;
+                if (f2 >= 26.0f) { br.ph2 += f2 / RATE; br.ph2 -= (int)br.ph2; s2 = 0.55f * std::sin(2 * PI * br.ph2); }   // two down, if audible
+                float senv = (1.0f - std::exp(-tb / 0.06f)) * std::exp(-tb / 3.8f);
+                sub2 += br.amp * senv * std::tanh(1.6f * (std::sin(2 * PI * br.ph[6]) + s2)) * 0.95f;
+                br.age += 1.0f;
+                if (tb > 30.0f) br.age = -1.0f;
+            }
 
             // hall, then the master level (after the reverb, so a cut to black is true silence), then a
-            // limiter that lets the drop be loud without breaking up, and a soft clip
+            // limiter that keeps the low end loud without breaking up, and a soft clip
             float wetL = reverb(0, (L + R) * 0.5f + L * 0.2f), wetR = reverb(1, (L + R) * 0.5f + R * 0.2f);
             float lv = levelFrom + (cur.level - levelFrom) * fi;
-            float oL = (L * 0.7f + wetL * 0.55f + bass) * lv, oR = (R * 0.7f + wetR * 0.55f + bass) * lv;
+            float oL = (L * 0.7f + wetL * 0.55f + sub2) * lv, oR = (R * 0.7f + wetR * 0.55f + sub2) * lv;
             float peak = std::max(std::fabs(oL), std::fabs(oR));
             limEnv = peak > limEnv ? limEnv + (peak - limEnv) * 0.05f : limEnv * 0.99995f;   // fast attack, ~0.4 s release
             float g = limEnv > 0.9f ? 0.9f / limEnv : 1.0f;

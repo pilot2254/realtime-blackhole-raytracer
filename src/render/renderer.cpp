@@ -95,7 +95,7 @@ void runBloom(const Target& src, std::vector<Target>& mips) {
 }
 
 void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<Target>& mips, float t, float fade,
-                      const Overlay& ov, float exposure, float telescope, float shake) {
+                      const Overlay& ov, float exposure, float telescope) {
     p_glBindFramebuffer(K_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
     GLuint p = g_progComp;
@@ -121,7 +121,6 @@ void composite(GLuint fbo, int w, int h, const Target& scene, const std::vector<
     u1i(p, "uBlur", 3);
     u2f(p, "uBlurTexel", 1.0f / blur.w, 1.0f / blur.h);
     u1f(p, "uEHT", telescope);
-    u1f(p, "uShake", shake * P.shake);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     p_glActiveTexture(K_TEXTURE0);
 }

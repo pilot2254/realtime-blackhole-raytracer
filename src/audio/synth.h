@@ -1,6 +1,7 @@
 #pragma once
 // The soundtrack, synthesised from the physics: a pipe organ that builds as the camera nears the
-// horizon, a clock that ticks once per second of far-away time (so it speeds up with time dilation and
+// horizon, an organ ostinato that quickens as we fall, long brass impacts with sub-bass in the last
+// minute before the horizon, a clock that ticks once per second of far-away time (so it speeds up with time dilation and
 // stops inside the horizon), and a low roar near the disk. Deterministic: the same camera path always
 // gives the same sound, so the video export renders it offline, sample-exact.
 #include <cstdint>
@@ -17,9 +18,6 @@ struct SoundControls {
     float hum = 0.0f;           // a ship close by
     float ocean = 0.0f;         // a planet's ocean close by
     float coda = 0.0f;          // 1 after the film's cut to black: resolve to A minor and ring out
-    float quake = 0.0f;         // sub-bass swell toward the horizon (horizonQuake)
-    float inside = 0.0f;        // 1 inside the horizon: crossing it fires the boom
-    float duck = 0.0f;          // the last moments before the horizon: the music holds its breath
 };
 // t: film time when film = true, else free-camera time (scene objects move with it)
 SoundControls soundControls(const CamState& c, float fade, float t, bool film);
@@ -36,6 +34,8 @@ private:
     struct Voice { float freq, pan; int table; float phA = 0, phB = 0, amp = 0; };
     struct Comb { std::vector<float> buf; int pos = 0; float store = 0; };
     struct Allpass { std::vector<float> buf; int pos = 0; };
+    // a brass "braam": low detuned saws through a filter that blooms open, over sine sub-bass
+    struct Braam { float age = -1.0f, amp = 0.0f, freq = 0.0f, ph[7] = {}, ph2 = 0.0f, lp[2][2] = {}; };
 
     std::vector<Voice> voices;
     SoundControls cur;
@@ -44,8 +44,10 @@ private:
     float tickEnv = 0, tickAge = 0, tickLp = 0, brown[2] = {0, 0}, roarLp[2] = {0, 0}, hpPrev = 0, hpOut = 0;
     float humPhase[3] = {0, 0, 0}, humLp[2] = {0, 0}, oceanLp[2] = {0, 0}, oceanLp2[2] = {0, 0};
     float codaMix = 0.0f;
-    float quakePh[4] = {0, 0, 0, 0}, rumbleLp[2][2] = {{0, 0}, {0, 0}};
-    float boomAge = -1.0f, boomPh = 0.0f, boomLp = 0.0f, wasInside = -1.0f, limEnv = 0.0f;
+    long  ostStep = -1, braamBeat = -1;
+    float ostEnv = 0.0f, ostPh = 0.0f, ostFreq = 0.0f, ostAccent = 1.0f, ostPan = 0.0f, limEnv = 0.0f;
+    Braam braam[3];
+    int   braamNext = 0;
     uint32_t rng = 0x9E3779B9u;
     Comb comb[2][4];
     Allpass ap[2][2];

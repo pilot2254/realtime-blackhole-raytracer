@@ -153,8 +153,7 @@ static void finishFrame() {
     overlayUpdate(g_ovExport, j.W, j.H, ft, !j.screenshot || j.shotSeq);
     CamState cam = j.screenshot ? j.shotCam : evalSequence(ft);
     float ex = P.exposure * autoExposure(cam);
-    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade, g_ovExport, ex, telescopeAmount(ft, !j.screenshot || j.shotSeq),
-              horizonQuake(cam));
+    composite(j.out8.fbo, j.W, j.H, j.accum, j.mips, ft, fade, g_ovExport, ex, telescopeAmount(ft, !j.screenshot || j.shotSeq));
     j.haveFrame = true;
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);

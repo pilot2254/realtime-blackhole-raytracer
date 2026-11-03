@@ -89,15 +89,6 @@ float farClockRate(const CamState& c) {
     return (float)(1.0 / std::sqrt(1.0 - vrel * vrel) / std::sqrt(1.0 - 1.0 / r));
 }
 
-// Drives the sub-bass and the camera shake. Nothing physical shakes (for a hole this big the tides at the
-// horizon are gentle); this is the score marking the moment of no return: a growl on the way down, the
-// full weight the instant we cross, fading as we fall on inside.
-float horizonQuake(const CamState& c) {
-    float x = camRadius(c) / std::max(horizonRadius(), 1e-3f);
-    if (x >= 1.0f) { float b = smoothstepf(1.8f, 1.0f, x); return 0.35f * b * b; }
-    return std::exp(-(1.0f - x) * 3.0f);
-}
-
 float diskProximity(const CamState& c) {
     if (!P.disk) return 0.0f;
     V3 p = camBasis(c).pos;

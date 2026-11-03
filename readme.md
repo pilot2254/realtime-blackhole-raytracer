@@ -96,7 +96,8 @@ There's no recorded music. A synthesiser written in C++ reads the camera's state
 - **An organ** (A minor, in a cathedral reverb) swells as you approach the horizon.
 - **A clock** ticks once per second of *far-away* time. It speeds up with time dilation, and stops at the horizon, where no outside clock exists any more.
 - **The disk** roars when you're close, **a ship's engines** hum, and **a planet's ocean** swells.
-- **The horizon:** a sub-bass growl (an organ's 32-foot register, two pipes beating against each other) builds on the way down. Just before the horizon the music holds its breath, and at the crossing it all comes back with a boom that drops from 80 Hz to 27.5 Hz, the low A, while the picture shakes. That's the score marking the moment, not physics. For a black hole this big, nothing would shake. The shake can be turned down under Post Process > Lens.
+- **An ostinato:** the organ starts repeating the chord's notes once the hole is near, at 2, then 4, then 8 notes a second as you fall.
+- **Brass impacts:** in the last minute before the horizon, long low brass "braams" land on every chord change, then every half bar. Each one carries a sine sub-bass an octave below (two octaves where that's still audible), and it's loud. The rest of the low end steps back so the impacts own it.
 - **The ending:** at the cut to black the effects stop, and the organ resolves and rings out.
 
 The same code plays live and renders into the video.
